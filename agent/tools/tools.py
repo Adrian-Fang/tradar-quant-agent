@@ -24,7 +24,7 @@ from research.vector_backtest import (
     run_backtest as canonical_run_backtest,
 )
 
-from .contracts import ToolResult, ToolStatus
+from ..core.contracts import ToolResult, ToolStatus
 
 
 def _normalize_date(value: Any, field_name: str) -> tuple[pd.Timestamp, str]:

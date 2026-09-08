@@ -25,10 +25,13 @@ Tradar 是一个量化研究、策略验证与生产信号平台，并正在逐�
 
 策略研究目录职责：
 
-- `agent/`：Agent orchestration、Tool contracts、ResearchRun 等 Agent-facing 能力。
+- `agent/core/`：共享 Tool contracts、ResearchRun、provider adapters 与资源加载。
+- `agent/tools/`：当前真实存在的 Tool Calling capability、production tools 与其 eval runner。
+- `agent/context/`：Context Engineering eval runner。
 - `research/`：唯一 canonical quantitative research engine。
 - `scripts/`：具体研究实验与一次性研究入口。
 - `utils/`：数据加载与通用基础设施。
+- `resources/`：非执行型 eval dataset、稳定 prompt 与知识记录约定，不放 Python 代码或私有历史。
 - `tests/`：关键公共能力的回归测试。
 
 依赖关系应尽量保持：`agent → research → utils` 。Agent 层负责理解任务和调用能力，`research/` 负责确定性的量化计算。不要把特定研究实验写进 `research/`。实验性逻辑通常应该放在 `scripts/`。
@@ -211,7 +214,7 @@ Tradar 正在逐步把原本依赖研究人员和脚本完成的流程显式化�
 → Production
 ```
 
-`agent/` 中的 Tool 是稳定的业务能力 contract，而不是把 `research/` 中每个 Python 函数机械地暴露成 Tool。
+`agent/tools/` 中的 Tool 是稳定的业务能力 contract，而不是把 `research/` 中每个 Python 函数机械地暴露成 Tool。
 
 当前和计划中的核心 Tool 包括：
 
@@ -222,6 +225,15 @@ Tradar 正在逐步把原本依赖研究人员和脚本完成的流程显式化�
 - `compare_runs`
 
 后续还会增加 research retrieval / memory、event study 和 strategy candidate 等能力。如果已有 Agent Tool 能完整覆盖任务，优先调用 Tool。如果当前 Tool 还不能覆盖新的探索性研究，可以继续采用：`研究问题 → scripts 实验 → research engine` 研究成熟后，再考虑是否值得沉淀为新的稳定 Agent Tool。不要为了“Agent 化”而把所有实验代码都包装成 Tool。
+
+当前 capability eval runner：
+
+```bash
+python -m agent.tools.eval --provider fixture --repeats 1
+python -m agent.context.eval --provider fixture --repeats 1
+```
+
+`resources/eval/` 中的 JSONL 是 dataset，`agent/*/eval.py` 是 runner，`agent/tools/tools.py` 是 production capability。三者保持分离；远程 DeepSeek/OpenAI eval 由调用者自行运行。
 
 ## 9. 修改公共研究能力时
 

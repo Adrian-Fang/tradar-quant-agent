@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from eval_context import CONTEXT_CASES, run_context_eval, score_context_case
+from agent.context.eval import CONTEXT_CASES, run_context_eval, score_context_case
 
 
 class ContextEvalTests(unittest.TestCase):

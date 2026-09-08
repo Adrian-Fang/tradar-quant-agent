@@ -6,13 +6,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from agent import DeepSeekChatClient, TOOL_SCHEMAS, ToolResult, run_backtest as agent_run_backtest, run_tool_calling
-from agent.tool_calling import OpenAIResponsesClient, _request_payload
-from eval_agent_tools import (
+from agent.core.providers import OpenAIResponsesClient
+from agent.tools.eval import (
     BENCHMARK_CASES,
     EVAL_ARTIFACTS,
     _prepare_eval_artifacts,
     score_case,
 )
+from agent.tools.runner import _request_payload
 
 
 class FakeClient:
@@ -66,7 +67,7 @@ class ToolCallingTests(unittest.TestCase):
             normalized_args={"start_date": "2026-01-01", "end_date": "2026-01-31"},
             result={"summary": {"eligible": 1}},
         )
-        with patch("agent.tool_calling.TOOL_FUNCTIONS", {"inspect_universe": lambda **kwargs: executed}):
+        with patch("agent.tools.runner.TOOL_FUNCTIONS", {"inspect_universe": lambda **kwargs: executed}):
             outcome = run_tool_calling("inspect universe", client=fake, run_id="run-1")
 
         self.assertEqual(outcome["selected_tool"], "inspect_universe")
@@ -113,7 +114,7 @@ class ToolCallingTests(unittest.TestCase):
                 ),
             ]))],
         ))
-        with patch("agent.tool_calling.OpenAI") as openai_factory:
+        with patch("agent.core.providers.OpenAI") as openai_factory:
             client = DeepSeekChatClient(api_key="test-key", sdk_client=fake_sdk)
             normalized = client.create(_request_payload("统计 universe", "deepseek-v4-flash"))
             openai_factory.assert_not_called()
@@ -147,7 +148,7 @@ class ToolCallingTests(unittest.TestCase):
 
     def test_openai_provider_uses_installed_sdk_resource(self):
         fake_sdk = SimpleNamespace(responses=SimpleNamespace(create=lambda **_payload: {}))
-        with patch("agent.tool_calling.OpenAI", return_value=fake_sdk) as openai_factory:
+        with patch("agent.core.providers.OpenAI", return_value=fake_sdk) as openai_factory:
             client = OpenAIResponsesClient(api_key="test-key")
         openai_factory.assert_called_once()
         self.assertIs(client.client, fake_sdk)

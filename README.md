@@ -6,7 +6,10 @@ Tradar 是量化研究、策略验证和 Agent 工具层。核心职责是提供
 
 ```text
 tradar/
-├── agent/                  # Agent orchestration 与稳定 Tool contract
+├── agent/
+│   ├── core/               # Contracts、provider adapters、resource loaders
+│   ├── tools/              # Tool schemas、orchestration、tools、Tool Calling eval
+│   └── context/            # Context Eval runner
 ├── research/               # 唯一的量化研究引擎
 │   ├── panel.py            # 面板数据与 universe
 │   ├── factor_analyzer.py  # 因子分析
@@ -17,6 +20,10 @@ tradar/
 ├── scripts/                # 研究实验、回测和一次性任务
 ├── utils/                  # 数据加载与通用基础设施
 ├── data/                   # Tradar 自身的过程数据和研究缓存
+├── resources/
+│   ├── eval/               # JSONL datasets；不放执行代码
+│   ├── prompts/            # 稳定的 eval/system prompt
+│   └── knowledge/          # Research Record 约定，不含私有历史
 └── tests/                  # 公共能力回归测试
 ```
 
@@ -26,6 +33,21 @@ tradar/
 source venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env
+```
+
+本地 deterministic eval（不会调用远程模型）：
+
+```bash
+python -m agent.tools.eval --provider fixture --repeats 1
+python -m agent.context.eval --provider fixture --repeats 1
+```
+
+需要模型时，按 provider 配置对应 API key 后运行同一个 capability runner；远程 eval 不属于测试套件。
+
+测试套件：
+
+```bash
+python -m unittest discover -s tests -p 'test_*.py'
 ```
 
 
