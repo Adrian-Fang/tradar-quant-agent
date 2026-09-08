@@ -1,4 +1,4 @@
-"""Context Engineering Eval v0: paired, rule-scored context decisions."""
+"""Context Engineering Eval v1: behavior-contract and pair-level scoring."""
 
 from __future__ import annotations
 
@@ -13,16 +13,41 @@ from ..core.resources import load_jsonl, load_prompt
 
 
 CONTEXT_CASES = load_jsonl("eval/context/cases.jsonl")
+PAIR_EXPECTATIONS = {
+    "momentum_evidence_state": "should_change",
+    "high52_result_availability": "should_change",
+    "current_truth_over_stale_state": "not_scored",
+    "current_instruction_over_preference": "should_change",
+    "distractor_robustness": "should_not_change",
+    "comparison_context_sufficiency": "should_change",
+}
+
+
+def _all_state_tags() -> tuple[str, ...]:
+    return tuple(sorted({
+        tag
+        for case in CONTEXT_CASES
+        for key in ("must_recognize", "must_not_recognize")
+        for tag in case["behavior_contract"]["state"][key]
+    }))
+
+
+def _all_decisions() -> tuple[str, ...]:
+    return tuple(sorted({
+        tag
+        for case in CONTEXT_CASES
+        for key in ("acceptable", "must_not")
+        for tag in case["behavior_contract"]["decision"][key]
+    }))
 
 
 def _all_action_tags() -> tuple[str, ...]:
-    tags = {
+    return tuple(sorted({
         tag
         for case in CONTEXT_CASES
-        for key in ("required_actions", "forbidden_actions")
-        for tag in case["scoring"][key]
-    }
-    return tuple(sorted(tags))
+        for key in ("must", "must_not", "optional")
+        for tag in case["behavior_contract"]["action"][key]
+    }))
 
 
 def _prompt(case: dict[str, Any]) -> dict[str, Any]:
@@ -33,10 +58,8 @@ def _prompt(case: dict[str, Any]) -> dict[str, Any]:
             {
                 "user_request": case["user_request"],
                 "context": case["context"],
-                "context_labels": case["critical_context"],
-                "allowed_decisions": sorted({
-                    item["expected_behavior"]["decision"] for item in CONTEXT_CASES
-                }),
+                "allowed_state_tags": _all_state_tags(),
+                "allowed_decisions": _all_decisions(),
                 "allowed_action_tags": _all_action_tags(),
             },
             ensure_ascii=False,
@@ -51,15 +74,18 @@ class ContextFixtureClient:
         self.case = case
 
     def create(self, payload: Mapping[str, Any]) -> dict[str, str]:
-        behavior = self.case["expected_behavior"]
-        scoring = self.case["scoring"]
+        contract = self.case["behavior_contract"]
+        decision = contract["decision"]["acceptable"][0]
+        actions = list(contract["action"]["must"])
+        if decision == "evaluate_factor_first":
+            actions.append("run_factor_evaluation")
         return {
             "output_text": json.dumps(
                 {
-                    "decision": behavior["decision"],
-                    "actions": scoring["required_actions"],
-                    "used_context": self.case["critical_context"],
-                    "reason": behavior["should"],
+                    "state": contract["state"]["must_recognize"],
+                    "decision": decision,
+                    "actions": list(dict.fromkeys(actions)),
+                    "reason": "deterministic fixture response satisfies the behavior contract",
                 },
                 ensure_ascii=False,
             )
@@ -110,7 +136,26 @@ def _parse_response(text: str) -> tuple[dict[str, Any] | None, str | None]:
     return parsed, None
 
 
-def run_context_case(case: dict[str, Any], *, client: Any, model: str) -> dict[str, Any]:
+def _response_shape_error(parsed: dict[str, Any] | None) -> str | None:
+    if parsed is None:
+        return None
+    expected = {"state", "decision", "actions", "reason"}
+    if set(parsed) != expected:
+        return "response must contain exactly state, decision, actions, and reason"
+    if not isinstance(parsed["state"], list) or not all(isinstance(tag, str) for tag in parsed["state"]):
+        return "response.state must be an array of strings"
+    if not isinstance(parsed["decision"], str):
+        return "response.decision must be a string"
+    if not isinstance(parsed["actions"], list) or not all(isinstance(tag, str) for tag in parsed["actions"]):
+        return "response.actions must be an array of strings"
+    if not isinstance(parsed["reason"], str):
+        return "response.reason must be a string"
+    return None
+
+
+def run_context_case(
+    case: dict[str, Any], *, client: Any, model: str,
+) -> dict[str, Any]:
     payload = _prompt(case)
     payload["model"] = model
     try:
@@ -121,49 +166,112 @@ def run_context_case(case: dict[str, Any], *, client: Any, model: str) -> dict[s
         text = ""
         parsed = None
         parse_error = f"provider_error: {type(exc).__name__}: {exc}"
-    return {"response_text": text, "parsed": parsed, "parse_error": parse_error}
+    return {
+        "response_text": text,
+        "parsed": parsed,
+        "parse_error": parse_error,
+        "structure_error": _response_shape_error(parsed) if parse_error is None else None,
+    }
 
 
-def score_context_case(case: dict[str, Any], outcome: dict[str, Any], repeat: int) -> dict[str, Any]:
+def score_context_case(
+    case: dict[str, Any], outcome: dict[str, Any], repeat: int,
+) -> dict[str, Any]:
     parsed = outcome["parsed"]
-    behavior = case["expected_behavior"]
-    scoring = case["scoring"]
+    contract = case["behavior_contract"]
+    state = set(parsed.get("state", [])) if isinstance(parsed, dict) else set()
     actions = set(parsed.get("actions", [])) if isinstance(parsed, dict) else set()
-    used_context = set(parsed.get("used_context", [])) if isinstance(parsed, dict) else set()
     decision = parsed.get("decision") if isinstance(parsed, dict) else None
-    missing_context = sorted(set(case["critical_context"]) - used_context)
-    missing_actions = sorted(set(scoring["required_actions"]) - actions)
-    forbidden_actions = sorted(set(scoring["forbidden_actions"]) & actions)
-    decision_ok = decision == behavior["decision"]
-    automated_pass = (
-        outcome["parse_error"] is None
-        and decision_ok
-        and not missing_context
-        and not missing_actions
-        and not forbidden_actions
-    )
+
+    state_contract = contract["state"]
+    decision_contract = contract["decision"]
+    action_contract = contract["action"]
+    missing_state = sorted(set(state_contract["must_recognize"]) - state)
+    forbidden_state = sorted(set(state_contract["must_not_recognize"]) & state)
+    decision_not_acceptable = decision not in set(decision_contract["acceptable"])
+    forbidden_decision = decision in set(decision_contract["must_not"])
+    missing_actions = sorted(set(action_contract["must"]) - actions)
+    forbidden_actions = sorted(set(action_contract["must_not"]) & actions)
+
+    state_pass = not missing_state and not forbidden_state
+    decision_pass = not decision_not_acceptable and not forbidden_decision
+    action_pass = not missing_actions and not forbidden_actions
+    deterministic_failure = not (state_pass and decision_pass and action_pass)
+    review_reason = outcome["parse_error"] or outcome["structure_error"]
+    if review_reason:
+        status = "human_review"
+        failure_type = "provider_error" if outcome["parse_error"] and outcome["parse_error"].startswith("provider_error:") else "malformed_response"
+    elif deterministic_failure:
+        status = "fail"
+        failure_type = "behavior_contract_violation"
+    else:
+        status = "pass"
+        failure_type = "none"
+
+    actual_actions = sorted(actions)
     return {
         "case": case["id"],
         "pair_id": case["pair_id"],
         "group": case["group"],
         "repeat": repeat,
+        "state": sorted(state),
         "decision": decision or "<none>",
-        "expected_decision": behavior["decision"],
-        "decision_ok": decision_ok,
-        "missing_context": missing_context,
+        "actions": actual_actions,
+        "state_interpretation_pass": state_pass,
+        "decision_policy_pass": decision_pass,
+        "action_compliance_pass": action_pass,
+        "deterministic_pass": not deterministic_failure,
+        "automated_pass": status == "pass",
+        "status": status,
+        "human_review_required": status == "human_review",
+        "human_review_reason": review_reason or "",
+        "failure_type": failure_type,
+        "review_reason": review_reason or "",
+        "parse_error": outcome["parse_error"],
+        "structure_error": outcome["structure_error"],
+        "missing_state": missing_state,
+        "forbidden_state": forbidden_state,
+        "decision_not_acceptable": decision_not_acceptable,
+        "forbidden_decision": forbidden_decision,
         "missing_actions": missing_actions,
         "forbidden_actions": forbidden_actions,
-        "automated_pass": automated_pass,
-        "status": "pass" if automated_pass else "human_review",
-        "human_review_required": not automated_pass,
-        "human_review_reason": (
-            "free-form reason is recorded but not automatically scored"
-            if automated_pass else outcome["parse_error"] or "deterministic checks did not pass"
-        ),
-        "parse_error": outcome["parse_error"],
         "reason": parsed.get("reason", "") if isinstance(parsed, dict) else "",
         "response_text": outcome["response_text"],
     }
+
+
+def _pair_signature(row: dict[str, Any]) -> dict[str, Any]:
+    return {"decision": row["decision"], "actions": row["actions"]}
+
+
+def _pair_results(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    results = []
+    for pair_id, expectation in PAIR_EXPECTATIONS.items():
+        pair_rows = [row for row in rows if row["pair_id"] == pair_id]
+        signatures = sorted({
+            json.dumps(_pair_signature(row), ensure_ascii=False, sort_keys=True)
+            for row in pair_rows
+        })
+        signature_values = [json.loads(signature) for signature in signatures]
+        result = {
+            "pair_id": pair_id,
+            "expectation": expectation,
+            "cases": sorted({row["case"] for row in pair_rows}),
+            "signatures": signature_values,
+            "distinct_signature_count": len(signature_values),
+        }
+        if expectation == "not_scored":
+            result.update({"status": "not_scored", "pair_pass": None})
+        elif any(row["human_review_required"] for row in pair_rows):
+            result.update({"status": "human_review", "pair_pass": None})
+        elif any(not row["automated_pass"] for row in pair_rows):
+            result.update({"status": "fail", "pair_pass": False})
+        else:
+            changed = len(signature_values) > 1
+            pair_pass = changed if expectation == "should_change" else not changed
+            result.update({"status": "pass" if pair_pass else "fail", "pair_pass": pair_pass})
+        results.append(result)
+    return results
 
 
 def run_context_eval(
@@ -198,28 +306,37 @@ def run_context_eval(
         "provider": provider,
         "cases": len(CONTEXT_CASES),
         "repeats": repeats,
+        "pair_results": _pair_results(rows),
     }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Context Engineering Eval v0")
+    parser = argparse.ArgumentParser(description="Context Engineering Eval v1")
     parser.add_argument("--provider", choices=("fixture", "deepseek", "openai"), default="fixture")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
     rows, meta = run_context_eval(args.provider, args.repeats)
     if meta["status"] == "skipped":
-        print(f"Context Eval v0 skipped: {meta['reason']}")
+        print(f"Context Eval v1 skipped: {meta['reason']}")
         return
     for row in rows:
         print(
             f"{row['case']} | {row['status']} | "
-            f"decision={row['decision']} | expected={row['expected_decision']}"
+            f"decision={row['decision']} | actions={row['actions']}"
         )
         if row["human_review_required"]:
-            print(f"  review: {row['parse_error'] or row['missing_actions'] or row['forbidden_actions'] or row['missing_context']}")
+            print(f"  review: {row['review_reason']}")
+    print()
+    print("Pair results:")
+    for pair in meta["pair_results"]:
+        print(
+            f"{pair['pair_id']} | {pair['status']} | "
+            f"expectation={pair['expectation']} | "
+            f"signatures={pair['distinct_signature_count']}"
+        )
     if args.verbose:
-        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        print(json.dumps({"rows": rows, "meta": meta}, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
