@@ -1,0 +1,8 @@
+name: small_within_industry
+description: "行业内相对市值（log市值行业内排名），行业内市值更小的公司分越高。与 market_cap_percentile（时序分位）不同，这是截面中性化后的小市值因子，剔除了'小市值行业vs大市值行业'的结构性偏差。"
+steps:
+  - field: market_cap
+  - filter: "> 0"
+  - log: true
+  - group_rank_pct: {by: industry_lv1}
+  - invert: true          # 行业内相对小市值 = 更高分

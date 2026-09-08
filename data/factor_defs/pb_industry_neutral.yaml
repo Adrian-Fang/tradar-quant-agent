@@ -1,0 +1,8 @@
+# data/factor_defs/pb_industry_neutral.yaml
+name: pb_industry_neutral
+description: "PB行业内分位数（lv1），同行业内相对便宜分越高"
+steps:
+  - field: pb
+  - filter: "> 0"
+  - group_rank_pct: {by: industry_lv1}
+  - invert: true

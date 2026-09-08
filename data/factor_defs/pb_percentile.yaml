@@ -1,0 +1,7 @@
+name: pb_percentile
+description: "PB相对自身历史分位数，越便宜分越高"
+steps:
+  - field: pb
+  - filter: "> 0"
+  - rolling_percentile: 504
+  - invert: true

@@ -1,0 +1,15 @@
+# data/factor_defs/close_position_in_range.yaml
+name: close_position_in_range
+description: "收盘价在20日最高最低区间中的相对位置，越低分越高（超跌反弹逻辑）"
+steps:
+  - field: close
+  - save: c
+  - field: high
+  - rolling_mean: 20
+  - save: h20
+  - field: low
+  - rolling_mean: 20
+  - save: l20
+  - expr: "(c - l20) / (h20 - l20)"
+  - rank_pct: true
+  - invert: true

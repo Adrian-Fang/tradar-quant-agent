@@ -1,0 +1,6 @@
+name: industry_momentum_20d
+description: "行业内相对动量：20日收益率在行业内排名，选行业内近期强势股。与绝对动量不同，行业中性化后在牛熊均有效（捕捉板块内轮动，而非绝对趋势）。"
+steps:
+  - field: close
+  - returns: 20
+  - group_rank_pct: {by: industry_lv1}

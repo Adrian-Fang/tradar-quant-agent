@@ -1,0 +1,7 @@
+name: reversal_5d
+description: "5日价格反转，过去5日收益越低分越高。"
+steps:
+  - field: close
+  - returns: 5
+  - rank_pct: true
+  - invert: true

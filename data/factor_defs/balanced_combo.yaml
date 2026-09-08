@@ -1,0 +1,6 @@
+name: balanced_combo
+description: "均衡三因子合成，对应 config.prod.yaml balanced 策略：换手率低 + 高波动 + 正动量，权重 0.34/0.33/0.33"
+combo:
+  - {factor: turnover_5d,   weight: 0.34}
+  - {factor: volatility_20d, weight: 0.33}
+  - {factor: momentum_60d,  weight: 0.33}

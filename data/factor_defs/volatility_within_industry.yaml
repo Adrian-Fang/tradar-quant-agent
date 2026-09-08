@@ -1,0 +1,8 @@
+name: volatility_within_industry
+description: "行业内波动率相对排名：行业内比同行更稳定（20日波动率更低）的股票分越高。与 volatility_20d 不同，行业中性化后剔除了板块整体波动的影响，选的是'板块内相对稳健'的个股。"
+steps:
+  - field: close
+  - returns: 1
+  - rolling_std: 20
+  - group_rank_pct: {by: industry_lv1}
+  - invert: true          # 低于行业平均波动率 = 更高分

@@ -1,0 +1,5 @@
+name: dual_basic
+description: "Dual因子：低换手率(60%) + 动量(40%)"
+combo:
+  - {factor: turnover_5d, weight: 0.6}
+  - {factor: momentum_60d, weight: 0.4}

@@ -1,0 +1,7 @@
+name: turnover_5d
+description: "5日均换手率，越低分越高（对应 balanced 策略 turnover 因子，window=5）"
+steps:
+  - field: turnover_rate
+  - rolling_mean: 5
+  - rank_pct: true
+  - invert: true

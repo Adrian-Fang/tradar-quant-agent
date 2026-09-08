@@ -1,0 +1,14 @@
+name: amihud_illiquidity_20d
+description: "Amihud非流动性因子：|日收益率| / 成交额，20日均值。越不流动分越高（流动性溢价方向，与原 build_amihud 行为一致）。"
+steps:
+  - field: close
+  - returns: 1          # 1日收益率 pct_change(1)
+  - abs: true           # 取绝对值
+  - save: ret_abs       # 保存中间量，供后续 expr 引用
+  - field: amount
+  - filter: "> 0"       # amount=0 → NaN，避免除零产生 inf
+  - save: amount        # 覆盖写回 context，让 expr 使用过滤后的版本
+  - expr: "ret_abs / amount"
+  - rolling_mean: 20
+  - rank_pct: true
+  # 不做 invert：Amihud 因子本身流动性越差分越高，这是它有效的方向

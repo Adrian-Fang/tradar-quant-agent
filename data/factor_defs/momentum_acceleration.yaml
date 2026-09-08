@@ -1,0 +1,14 @@
+# data/factor_defs/momentum_acceleration.yaml
+name: momentum_acceleration
+description: "20日动量减60日动量，捕捉动量加速度，越高分越高"
+steps:
+  - field: close
+  - save: c
+  - expr: "c"
+  - returns: 20
+  - save: mom20
+  - expr: "c"
+  - returns: 60
+  - save: mom60
+  - expr: "mom20 - mom60"
+  - rank_pct: true

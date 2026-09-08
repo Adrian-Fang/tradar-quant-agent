@@ -1,0 +1,13 @@
+name: pmo20_250
+description: "20日平均换手率相对250日平均换手率，比例越低分越高。"
+steps:
+  - field: turnover_rate
+  - save: turnover
+  - rolling_mean: 20
+  - save: turnover_20d
+  - expr: "turnover"
+  - rolling_mean: 250
+  - save: turnover_250d
+  - expr: "turnover_20d / turnover_250d"
+  - rank_pct: true
+  - invert: true

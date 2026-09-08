@@ -1,0 +1,13 @@
+# data/factor_defs/high_low_ratio_5d.yaml
+name: high_low_ratio_5d
+description: "5日内最高/最低价比值，越低（走势越平稳）分越高"
+steps:
+  - field: high
+  - rolling_mean: 5
+  - save: high5
+  - field: low
+  - rolling_mean: 5
+  - save: low5
+  - expr: "high5 / low5"
+  - rank_pct: true
+  - invert: true

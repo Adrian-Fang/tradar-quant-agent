@@ -1,0 +1,5 @@
+name: amihud_pe_combo
+description: "等权合成：PE行业中性 + Amihud流动性（各子因子 rank 后加权）"
+combo:
+  - {factor: pe_industry_neutral, weight: 0.5}
+  - {factor: amihud_illiquidity_20d, weight: 0.5}

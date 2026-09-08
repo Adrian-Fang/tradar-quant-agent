@@ -1,0 +1,7 @@
+name: volatility_20d
+description: "20日日收益率波动率（rolling std），越高分越高（对应 balanced 策略 volatility 因子）"
+steps:
+  - field: close
+  - returns: 1
+  - rolling_std: 20
+  - rank_pct: true

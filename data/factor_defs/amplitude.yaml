@@ -1,0 +1,7 @@
+name: amplitude
+description: "日内振幅N日均值，越小分越高"
+steps:
+  - expr: "(high - low) / close"
+  - rolling_mean: 20
+  - rank_pct: true
+  - invert: true

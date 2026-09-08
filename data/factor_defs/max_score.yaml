@@ -1,0 +1,8 @@
+name: MAX_SCORE
+description: Negative maximum daily adjusted close-to-close return over 20 trading days.
+steps:
+  - field: close
+  - returns: 1
+  - rolling_max: 20
+  - save: MAX20
+  - expr: "-1 * MAX20"

@@ -1,0 +1,14 @@
+# data/factor_defs/turnover_zscore.yaml
+name: turnover_zscore
+description: "换手率相对自身60日z-score，越低（相对冷清）分越高"
+steps:
+  - field: turnover_rate
+  - save: turnover
+  - rolling_mean: 60
+  - save: mean_60d
+  - expr: "turnover"
+  - rolling_std: 60
+  - save: std_60d
+  - expr: "(turnover - mean_60d) / std_60d"
+  - rank_pct: true
+  - invert: true

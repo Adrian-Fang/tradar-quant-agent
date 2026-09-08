@@ -1,0 +1,12 @@
+name: pe_implied_roe
+description: "PE/PB = (P/E)/(P/B) = B/E ∝ 1/ROE。值越低说明每单位账面资产产生的盈利越多，是盈利能力代理指标。既不是单纯PE也不是单纯PB，而是两者的组合（质量因子）。"
+steps:
+  - field: pe
+  - filter: "> 0"
+  - save: pe
+  - field: pb
+  - filter: "> 0"
+  - save: pb
+  - expr: "pe / pb"
+  - rank_pct: true
+  - invert: true          # 低 pe/pb = 高隐含 ROE = 盈利质量好

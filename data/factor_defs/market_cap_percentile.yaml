@@ -1,0 +1,8 @@
+# data/factor_defs/market_cap_percentile.yaml
+name: market_cap_percentile
+description: "市值历史分位数（504日），越小（分位数越低）分越高"
+steps:
+  - field: market_cap
+  - filter: "> 0"
+  - rolling_percentile: 504
+  - invert: true

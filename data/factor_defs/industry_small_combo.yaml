@@ -1,0 +1,5 @@
+name: industry_small_combo
+description: "行业中性小市值动量：small_within_industry(50%) + dual_basic(50%)"
+combo:
+  - {factor: small_within_industry, weight: 0.5}
+  - {factor: dual_basic, weight: 0.5}

@@ -1,0 +1,13 @@
+# data/factor_defs/amount_growth.yaml
+name: amount_growth
+description: "20日均成交额相对60日均成交额的增长率，越高分越高"
+steps:
+  - field: amount
+  - save: amt
+  - rolling_mean: 20
+  - save: amt20
+  - expr: "amt"
+  - rolling_mean: 60
+  - save: amt60
+  - expr: "amt20 / amt60"
+  - rank_pct: true

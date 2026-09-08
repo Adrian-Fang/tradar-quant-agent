@@ -1,0 +1,8 @@
+name: HIGH52
+description: Adjusted close divided by its trailing 252-day maximum adjusted close.
+steps:
+  - field: close
+  - save: CLOSE
+  - rolling_max: 252
+  - save: MAX52
+  - expr: "CLOSE / MAX52"

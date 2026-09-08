@@ -1,0 +1,7 @@
+name: pe_industry_neutral
+description: "PE行业内分位数（lv1），同行业内相对便宜分越高"
+steps:
+  - field: pe
+  - filter: "> 0"
+  - group_rank_pct: {by: industry_lv1}
+  - invert: true

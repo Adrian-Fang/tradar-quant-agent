@@ -1,0 +1,40 @@
+# System files
+.DS_Store
+Thumbs.db
+
+# scripts, data and backups
+scripts/*
+data/*
+!data/factor_defs/
+!data/factor_defs/**
+
+# environment variables
+.env
+
+# logs
+*.log
+
+# compiled Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# tests
+.pytest_cache
+
+# local agent state
+.agents/
+.codex/
+
+# virtual environment
+.venv/
+venv/
+env/
+
+## temp files
+temp/
+*.diff
+.cache
+*.tmp
+*.bak

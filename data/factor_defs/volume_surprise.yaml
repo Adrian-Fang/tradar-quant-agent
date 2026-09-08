@@ -1,0 +1,11 @@
+# data/factor_defs/volume_surprise.yaml
+name: volume_surprise
+description: "当日成交量相对20日均量偏离度，越高分越高（放量信号）"
+steps:
+  - field: volume
+  - save: vol
+  - rolling_mean: 20
+  - save: vol_ma20
+  - expr: "vol / vol_ma20"
+  - rank_pct: true
+  - invert: true

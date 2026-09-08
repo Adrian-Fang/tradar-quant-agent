@@ -1,0 +1,13 @@
+name: price_volume_divergence
+description: "5日价格涨幅 - 5日成交额涨幅。正值 = 价格涨幅超出成交额增速（价升量缩）。方向待验证：正向（不加invert）测'量缩价稳=蓄力'假设；若IC为负则反向（加invert）意味着'价量齐升才是好信号'。"
+steps:
+  - field: close
+  - returns: 5
+  - save: price_ret5
+  - field: amount
+  - filter: "> 0"
+  - returns: 5
+  - save: amount_ret5
+  - expr: "price_ret5 - amount_ret5"
+  - winsorize: {lower: 1, upper: 99}   # 成交额涨跌幅极端值较多
+  - rank_pct: true
