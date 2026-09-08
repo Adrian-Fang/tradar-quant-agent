@@ -1,4 +1,4 @@
-"""Context Engineering Eval v1: behavior-contract and pair-level scoring."""
+"""Context Engineering Eval v1.1: behavior-contract and pair-level scoring."""
 
 from __future__ import annotations
 
@@ -23,34 +23,26 @@ PAIR_EXPECTATIONS = {
 }
 
 
-def _all_state_tags() -> tuple[str, ...]:
-    return tuple(sorted({
-        tag
-        for case in CONTEXT_CASES
-        for key in ("must_recognize", "must_not_recognize")
-        for tag in case["behavior_contract"]["state"][key]
-    }))
-
-
-def _all_decisions() -> tuple[str, ...]:
-    return tuple(sorted({
-        tag
-        for case in CONTEXT_CASES
-        for key in ("acceptable", "must_not")
-        for tag in case["behavior_contract"]["decision"][key]
-    }))
-
-
-def _all_action_tags() -> tuple[str, ...]:
-    return tuple(sorted({
-        tag
-        for case in CONTEXT_CASES
-        for key in ("must", "must_not", "optional")
-        for tag in case["behavior_contract"]["action"][key]
-    }))
-
-
 def _prompt(case: dict[str, Any]) -> dict[str, Any]:
+    pair_cases = [candidate for candidate in CONTEXT_CASES if candidate["pair_id"] == case["pair_id"]]
+    allowed_state_tags = sorted({
+        tag
+        for candidate in pair_cases
+        for key in ("must_recognize", "must_not_recognize")
+        for tag in candidate["behavior_contract"]["state"][key]
+    })
+    allowed_decisions = sorted({
+        tag
+        for candidate in pair_cases
+        for key in ("acceptable", "must_not")
+        for tag in candidate["behavior_contract"]["decision"][key]
+    })
+    allowed_action_tags = sorted({
+        tag
+        for candidate in pair_cases
+        for key in ("must", "must_not", "optional")
+        for tag in candidate["behavior_contract"]["action"][key]
+    })
     return {
         "model": "",
         "instructions": load_prompt("prompts/context.eval.txt"),
@@ -58,9 +50,9 @@ def _prompt(case: dict[str, Any]) -> dict[str, Any]:
             {
                 "user_request": case["user_request"],
                 "context": case["context"],
-                "allowed_state_tags": _all_state_tags(),
-                "allowed_decisions": _all_decisions(),
-                "allowed_action_tags": _all_action_tags(),
+                "allowed_state_tags": allowed_state_tags,
+                "allowed_decisions": allowed_decisions,
+                "allowed_action_tags": allowed_action_tags,
             },
             ensure_ascii=False,
         ),
@@ -193,10 +185,16 @@ def score_context_case(
     missing_actions = sorted(set(action_contract["must"]) - actions)
     forbidden_actions = sorted(set(action_contract["must_not"]) & actions)
 
-    state_pass = not missing_state and not forbidden_state
+    if forbidden_state:
+        state_status = "fail"
+    elif missing_state:
+        state_status = "partial"
+    else:
+        state_status = "pass"
+    state_pass = state_status == "pass"
     decision_pass = not decision_not_acceptable and not forbidden_decision
     action_pass = not missing_actions and not forbidden_actions
-    deterministic_failure = not (state_pass and decision_pass and action_pass)
+    deterministic_failure = state_status == "fail" or not decision_pass or not action_pass
     review_reason = outcome["parse_error"] or outcome["structure_error"]
     if review_reason:
         status = "human_review"
@@ -215,8 +213,10 @@ def score_context_case(
         "group": case["group"],
         "repeat": repeat,
         "state": sorted(state),
+        "state_status": state_status,
         "decision": decision or "<none>",
         "actions": actual_actions,
+        "optional_action_tags": sorted(set(action_contract["optional"])),
         "state_interpretation_pass": state_pass,
         "decision_policy_pass": decision_pass,
         "action_compliance_pass": action_pass,
@@ -241,35 +241,45 @@ def score_context_case(
 
 
 def _pair_signature(row: dict[str, Any]) -> dict[str, Any]:
-    return {"decision": row["decision"], "actions": row["actions"]}
+    optional_actions = set(row.get("optional_action_tags", []))
+    return {
+        "decision": row["decision"],
+        "actions": sorted(set(row["actions"]) - optional_actions),
+    }
 
 
 def _pair_results(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     results = []
     for pair_id, expectation in PAIR_EXPECTATIONS.items():
         pair_rows = [row for row in rows if row["pair_id"] == pair_id]
-        signatures = sorted({
-            json.dumps(_pair_signature(row), ensure_ascii=False, sort_keys=True)
-            for row in pair_rows
-        })
-        signature_values = [json.loads(signature) for signature in signatures]
         result = {
             "pair_id": pair_id,
             "expectation": expectation,
             "cases": sorted({row["case"] for row in pair_rows}),
-            "signatures": signature_values,
-            "distinct_signature_count": len(signature_values),
         }
-        if expectation == "not_scored":
-            result.update({"status": "not_scored", "pair_pass": None})
-        elif any(row["human_review_required"] for row in pair_rows):
-            result.update({"status": "human_review", "pair_pass": None})
-        elif any(not row["automated_pass"] for row in pair_rows):
-            result.update({"status": "fail", "pair_pass": False})
-        else:
-            changed = len(signature_values) > 1
-            pair_pass = changed if expectation == "should_change" else not changed
-            result.update({"status": "pass" if pair_pass else "fail", "pair_pass": pair_pass})
+        repeat_results = []
+        for repeat in sorted({row["repeat"] for row in pair_rows}):
+            repeat_rows = [row for row in pair_rows if row["repeat"] == repeat]
+            signatures = sorted({
+                json.dumps(_pair_signature(row), ensure_ascii=False, sort_keys=True)
+                for row in repeat_rows
+            })
+            signature_values = [json.loads(signature) for signature in signatures]
+            repeat_result = {
+                "repeat": repeat,
+                "signatures": signature_values,
+                "distinct_signature_count": len(signature_values),
+            }
+            if expectation == "not_scored":
+                repeat_result.update({"status": "not_scored", "pair_pass": None})
+            elif any(row["human_review_required"] for row in repeat_rows):
+                repeat_result.update({"status": "human_review", "pair_pass": None})
+            else:
+                changed = len(signature_values) > 1
+                pair_pass = changed if expectation == "should_change" else not changed
+                repeat_result.update({"status": "pass" if pair_pass else "fail", "pair_pass": pair_pass})
+            repeat_results.append(repeat_result)
+        result["repeat_results"] = repeat_results
         results.append(result)
     return results
 
@@ -311,14 +321,14 @@ def run_context_eval(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Context Engineering Eval v1")
+    parser = argparse.ArgumentParser(description="Context Engineering Eval v1.1")
     parser.add_argument("--provider", choices=("fixture", "deepseek", "openai"), default="fixture")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
     rows, meta = run_context_eval(args.provider, args.repeats)
     if meta["status"] == "skipped":
-        print(f"Context Eval v1 skipped: {meta['reason']}")
+        print(f"Context Eval v1.1 skipped: {meta['reason']}")
         return
     for row in rows:
         print(
@@ -328,13 +338,14 @@ def main() -> None:
         if row["human_review_required"]:
             print(f"  review: {row['review_reason']}")
     print()
-    print("Pair results:")
+    print("Pair results by repeat:")
     for pair in meta["pair_results"]:
-        print(
-            f"{pair['pair_id']} | {pair['status']} | "
-            f"expectation={pair['expectation']} | "
-            f"signatures={pair['distinct_signature_count']}"
-        )
+        for repeat in pair["repeat_results"]:
+            print(
+                f"{pair['pair_id']} | repeat={repeat['repeat']} | {repeat['status']} | "
+                f"expectation={pair['expectation']} | "
+                f"signatures={repeat['distinct_signature_count']}"
+            )
     if args.verbose:
         print(json.dumps({"rows": rows, "meta": meta}, ensure_ascii=False, indent=2))
 

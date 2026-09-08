@@ -5,11 +5,16 @@ import unittest
 
 from agent.context.eval import (
     CONTEXT_CASES,
+    _pair_results,
     _prompt,
     run_context_case,
     run_context_eval,
     score_context_case,
 )
+
+
+def _case(case_id):
+    return next(case for case in CONTEXT_CASES if case["id"] == case_id)
 
 
 def _outcome(case, *, state=None, decision=None, actions=None, reason="test"):
@@ -31,16 +36,9 @@ def _outcome(case, *, state=None, decision=None, actions=None, reason="test"):
 class ContextEvalTests(unittest.TestCase):
     def test_cases_use_behavior_contract_schema(self):
         self.assertEqual(len(CONTEXT_CASES), 13)
-        self.assertEqual({case["group"] for case in CONTEXT_CASES}, {
-            "context_sensitivity",
-            "redundant_action",
-            "stale_context_resistance",
-            "conflict_resolution",
-            "distractor_robustness",
-            "context_sufficiency",
-        })
         for case in CONTEXT_CASES:
             self.assertNotIn("expected_tool", case)
+            self.assertNotIn("expected_behavior", case)
             for key in ("user_request", "context", "pair_id", "group", "failure_if", "why", "behavior_contract"):
                 self.assertIn(key, case)
             contract = case["behavior_contract"]
@@ -49,38 +47,100 @@ class ContextEvalTests(unittest.TestCase):
             self.assertEqual(set(contract["decision"]), {"acceptable", "must_not"})
             self.assertEqual(set(contract["action"]), {"must", "must_not", "optional"})
 
-    def test_prompt_has_global_tags_but_no_case_oracle(self):
-        case = CONTEXT_CASES[0]
-        payload = _prompt(case)
-        body = json.loads(payload["input"])
+        self.assertEqual(
+            _case("momentum_clean_context")["behavior_contract"]["action"]["must"],
+            ["propose_strategy_backtest"],
+        )
+        self.assertEqual(
+            _case("high52_fresh_result")["behavior_contract"]["action"]["must"],
+            [],
+        )
+        self.assertEqual(
+            _case("strategy_compare_result_missing")["behavior_contract"]["action"]["must"],
+            ["block_for_missing_result"],
+        )
+
+    def test_prompt_uses_pair_tags_without_case_oracle(self):
+        case = _case("momentum_strong_evidence")
+        body = json.loads(_prompt(case)["input"])
+        pair_cases = [candidate for candidate in CONTEXT_CASES if candidate["pair_id"] == case["pair_id"]]
+        expected_decisions = {
+            tag
+            for candidate in pair_cases
+            for key in ("acceptable", "must_not")
+            for tag in candidate["behavior_contract"]["decision"][key]
+        }
+        expected_state_tags = {
+            tag
+            for candidate in pair_cases
+            for key in ("must_recognize", "must_not_recognize")
+            for tag in candidate["behavior_contract"]["state"][key]
+        }
+        expected_action_tags = {
+            tag
+            for candidate in pair_cases
+            for key in ("must", "must_not", "optional")
+            for tag in candidate["behavior_contract"]["action"][key]
+        }
         self.assertEqual(body["user_request"], case["user_request"])
         self.assertEqual(body["context"], case["context"])
+        self.assertEqual(
+            set(body),
+            {"user_request", "context", "allowed_state_tags", "allowed_decisions", "allowed_action_tags"},
+        )
+        self.assertEqual(set(body["allowed_state_tags"]), expected_state_tags)
+        self.assertEqual(set(body["allowed_decisions"]), expected_decisions)
+        self.assertEqual(set(body["allowed_action_tags"]), expected_action_tags)
+        self.assertNotIn("reuse_existing_result", body["allowed_decisions"])
         for leaked_key in ("critical_context", "expected_behavior", "behavior_contract", "must_recognize"):
             self.assertNotIn(leaked_key, body)
-        self.assertTrue(set(case["behavior_contract"]["state"]["must_recognize"]) <= set(body["allowed_state_tags"]))
-        self.assertTrue(body["allowed_decisions"])
-        self.assertTrue(body["allowed_action_tags"])
 
-    def test_fixture_runner_passes_all_cases_without_aggregate_score(self):
+    def test_fixture_passes_false_negative_cases(self):
         rows, meta = run_context_eval("fixture", repeats=1)
         self.assertEqual(meta["status"], "complete")
         self.assertEqual(len(rows), 13)
         self.assertTrue(all(row["status"] == "pass" for row in rows))
+        by_id = {row["case"]: row for row in rows}
+        for case_id in (
+            "momentum_clean_context",
+            "momentum_with_distractors",
+            "high52_fresh_result",
+            "high52_no_result",
+            "current_no_extra_validation",
+        ):
+            self.assertEqual(by_id[case_id]["status"], "pass")
         self.assertNotIn("score", meta)
         self.assertNotIn("accuracy", meta)
-        self.assertEqual(meta["pair_results"][-1]["pair_id"], "comparison_context_sufficiency")
 
-    def test_valid_contract_violation_is_fail_not_human_review(self):
-        case = CONTEXT_CASES[0]
+    def test_missing_state_is_partial_but_not_case_failure(self):
+        case = _case("momentum_strong_evidence")
         row = score_context_case(
             case,
-            _outcome(case, decision="stop_and_reassess"),
+            _outcome(case, state=case["behavior_contract"]["state"]["must_recognize"][:1]),
             repeat=1,
         )
+        self.assertEqual(row["state_status"], "partial")
+        self.assertFalse(row["state_interpretation_pass"])
+        self.assertEqual(row["status"], "pass")
+
+    def test_state_contradiction_is_deterministic_failure(self):
+        case = _case("momentum_strong_evidence")
+        state = case["behavior_contract"]["state"]["must_recognize"] + [
+            case["behavior_contract"]["state"]["must_not_recognize"][0]
+        ]
+        row = score_context_case(case, _outcome(case, state=state), repeat=1)
+        self.assertEqual(row["state_status"], "fail")
         self.assertEqual(row["status"], "fail")
         self.assertFalse(row["human_review_required"])
-        self.assertFalse(row["decision_policy_pass"])
-        self.assertEqual(row["failure_type"], "behavior_contract_violation")
+
+    def test_decision_and_action_contract_violations_fail(self):
+        case = _case("momentum_clean_context")
+        bad_decision = score_context_case(case, _outcome(case, decision="stop_and_reassess"), repeat=1)
+        self.assertEqual(bad_decision["status"], "fail")
+        bad_action = score_context_case(case, _outcome(case, actions=[]), repeat=1)
+        self.assertEqual(bad_action["status"], "fail")
+        empty_decision = score_context_case(case, _outcome(case, decision=""), repeat=1)
+        self.assertEqual(empty_decision["status"], "fail")
 
     def test_malformed_and_provider_errors_require_human_review(self):
         case = CONTEXT_CASES[0]
@@ -103,19 +163,33 @@ class ContextEvalTests(unittest.TestCase):
         self.assertEqual(provider_row["status"], "human_review")
         self.assertEqual(provider_row["failure_type"], "provider_error")
 
-    def test_momentum_not_started_accepts_blocked_pending_decision(self):
-        case = next(case for case in CONTEXT_CASES if case["id"] == "momentum_not_started")
-        row = score_context_case(
-            case,
-            _outcome(case, decision="blocked_pending_factor_evaluation", actions=[]),
+    def test_acceptable_alternatives_and_nonblocking_missing_preference(self):
+        momentum = _case("momentum_not_started")
+        momentum_row = score_context_case(
+            momentum,
+            _outcome(momentum, decision="blocked_pending_factor_evaluation", actions=[]),
             repeat=1,
         )
-        self.assertEqual(row["status"], "pass")
-        self.assertTrue(row["decision_policy_pass"])
-        self.assertTrue(row["action_compliance_pass"])
+        self.assertEqual(momentum_row["status"], "pass")
+
+        high52 = _case("high52_no_result")
+        high52_row = score_context_case(
+            high52,
+            _outcome(high52, decision="blocked_missing_result", actions=["start_high52_evaluation"]),
+            repeat=1,
+        )
+        self.assertEqual(high52_row["status"], "pass")
+
+        no_validation = _case("current_no_extra_validation")
+        no_validation_row = score_context_case(
+            no_validation,
+            _outcome(no_validation, decision="only_restate_old_result", actions=[]),
+            repeat=1,
+        )
+        self.assertEqual(no_validation_row["status"], "pass")
 
     def test_unspecified_metric_block_is_a_contract_failure(self):
-        case = next(case for case in CONTEXT_CASES if case["id"] == "strategy_compare_metrics_unspecified")
+        case = _case("strategy_compare_metrics_unspecified")
         row = score_context_case(
             case,
             _outcome(case, decision="blocked_for_unspecified_metric", actions=[]),
@@ -125,15 +199,53 @@ class ContextEvalTests(unittest.TestCase):
         self.assertFalse(row["human_review_required"])
         self.assertFalse(row["decision_policy_pass"])
 
-    def test_pair_change_and_no_change_contracts(self):
-        rows, meta = run_context_eval("fixture", repeats=1)
+    def test_pair_results_are_independent_from_case_failures(self):
+        clean = _case("momentum_clean_context")
+        distractors = _case("momentum_with_distractors")
+        broken_state = clean["behavior_contract"]["state"]["must_recognize"] + [
+            clean["behavior_contract"]["state"]["must_not_recognize"][0]
+        ]
+        broken = score_context_case(
+            clean,
+            _outcome(clean, state=broken_state, actions=["propose_strategy_backtest"]),
+            repeat=1,
+        )
+        valid = score_context_case(
+            distractors,
+            _outcome(distractors, actions=["propose_strategy_backtest"]),
+            repeat=1,
+        )
+        self.assertEqual(broken["status"], "fail")
+        pair = next(result for result in _pair_results([broken, valid]) if result["pair_id"] == "distractor_robustness")
+        self.assertEqual(pair["repeat_results"][0]["status"], "pass")
+
+    def test_pair_results_are_per_repeat_and_ignore_optional_actions(self):
+        rows, meta = run_context_eval("fixture", repeats=3)
         pair_results = {result["pair_id"]: result for result in meta["pair_results"]}
-        self.assertEqual(pair_results["distractor_robustness"]["status"], "pass")
-        self.assertTrue(pair_results["distractor_robustness"]["pair_pass"])
-        self.assertEqual(pair_results["momentum_evidence_state"]["status"], "pass")
-        self.assertTrue(pair_results["momentum_evidence_state"]["pair_pass"])
-        self.assertGreater(pair_results["momentum_evidence_state"]["distinct_signature_count"], 1)
-        self.assertEqual(pair_results["current_truth_over_stale_state"]["status"], "not_scored")
+        momentum = pair_results["momentum_evidence_state"]
+        self.assertEqual(len(momentum["repeat_results"]), 3)
+        self.assertTrue(all(repeat["pair_pass"] for repeat in momentum["repeat_results"]))
+
+        clean = _case("momentum_clean_context")
+        distractors = _case("momentum_with_distractors")
+        with_optional = score_context_case(
+            clean,
+            _outcome(clean, actions=["propose_strategy_backtest", "use_momentum_result"]),
+            repeat=1,
+        )
+        without_optional = score_context_case(
+            distractors,
+            _outcome(distractors, actions=["propose_strategy_backtest"]),
+            repeat=1,
+        )
+        pair = next(
+            result
+            for result in _pair_results([with_optional, without_optional])
+            if result["pair_id"] == "distractor_robustness"
+        )
+        repeat = pair["repeat_results"][0]
+        self.assertEqual(repeat["distinct_signature_count"], 1)
+        self.assertTrue(repeat["pair_pass"])
 
 
 if __name__ == "__main__":
