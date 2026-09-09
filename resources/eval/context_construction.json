@@ -1,0 +1,141 @@
+{
+  "cases": [
+    {
+      "id": "precedence_ordering",
+      "user_request": "决定下一步研究动作。",
+      "compaction_result": {
+        "status": "ok",
+        "context": [
+          {"id": "history", "kind": "history", "text": "历史背景。"},
+          {"id": "knowledge", "kind": "retrieved_knowledge", "text": "相关知识。"},
+          {"id": "preference", "kind": "user_preference", "text": "用户偏好。"},
+          {"id": "runtime", "kind": "runtime_truth", "text": "当前运行时事实。"},
+          {"id": "task", "kind": "task_state", "text": "当前任务状态。"},
+          {"id": "instruction", "kind": "current_instruction", "text": "当前明确指令。"}
+        ],
+        "kept": [
+          {"id": "history", "kind": "history", "text": "历史背景。"},
+          {"id": "knowledge", "kind": "retrieved_knowledge", "text": "相关知识。"},
+          {"id": "preference", "kind": "user_preference", "text": "用户偏好。"},
+          {"id": "runtime", "kind": "runtime_truth", "text": "当前运行时事实。"},
+          {"id": "task", "kind": "task_state", "text": "当前任务状态。"},
+          {"id": "instruction", "kind": "current_instruction", "text": "当前明确指令。"}
+        ],
+        "compacted": [],
+        "dropped": []
+      },
+      "system_rules": "",
+      "product_rules": "",
+      "expected": {
+        "status": "ok",
+        "context_order": ["instruction", "runtime", "task", "preference", "knowledge", "history"],
+        "instructions": "",
+        "input_contains": ["User Request:", "Context:", "\"id\": \"instruction\"", "\"id\": \"history\""],
+        "input_excludes": []
+      }
+    },
+    {
+      "id": "compacted_context_without_dropped_items",
+      "user_request": "解释当前结果。",
+      "compaction_result": {
+        "status": "ok",
+        "context": [
+          {"id": "instruction", "kind": "current_instruction", "text": "只解释结果。"},
+          {"id": "history_compacted", "kind": "history", "text": "status=validated\nprovenance=run-7"}
+        ],
+        "kept": [
+          {"id": "instruction", "kind": "current_instruction", "text": "只解释结果。"}
+        ],
+        "compacted": [
+          {"id": "history_compacted", "kind": "history", "text": "status=validated\nprovenance=run-7"}
+        ],
+        "dropped": [{"id": "history_dropped", "reason": "budget"}]
+      },
+      "system_rules": "",
+      "product_rules": "",
+      "expected": {
+        "status": "ok",
+        "context_order": ["instruction", "history_compacted"],
+        "instructions": "",
+        "input_contains": ["status=validated", "provenance=run-7", "history_compacted"],
+        "input_excludes": ["history_dropped"]
+      }
+    },
+    {
+      "id": "source_and_provenance_are_retained",
+      "user_request": "解释这个 research record。",
+      "compaction_result": {
+        "status": "ok",
+        "context": [
+          {
+            "id": "record",
+            "kind": "retrieved_knowledge",
+            "text": "结论仍需复核。",
+            "source": "research_record",
+            "provenance": {"research_id": "run-42", "date": "2026-08-31"}
+          }
+        ],
+        "kept": [],
+        "compacted": [],
+        "dropped": []
+      },
+      "system_rules": "",
+      "product_rules": "",
+      "expected": {
+        "status": "ok",
+        "context_order": ["record"],
+        "instructions": "",
+        "input_contains": ["\"source\": \"research_record\"", "\"research_id\": \"run-42\"", "\"date\": \"2026-08-31\""],
+        "input_excludes": []
+      }
+    },
+    {
+      "id": "rules_are_separate_from_context",
+      "user_request": "根据当前状态解释结果。",
+      "compaction_result": {
+        "status": "ok",
+        "context": [
+          {"id": "state", "kind": "task_state", "text": "结果已完成。"}
+        ],
+        "kept": [
+          {"id": "state", "kind": "task_state", "text": "结果已完成。"}
+        ],
+        "compacted": [],
+        "dropped": []
+      },
+      "system_rules": "Never invent facts.",
+      "product_rules": "Use the canonical research engine.",
+      "expected": {
+        "status": "ok",
+        "context_order": ["state"],
+        "instructions": "System Rules:\nNever invent facts.\n\nProduct Rules:\nUse the canonical research engine.",
+        "input_contains": ["User Request:", "根据当前状态解释结果。", "Context:", "结果已完成。"],
+        "input_excludes": ["Never invent facts.", "Use the canonical research engine."]
+      }
+    },
+    {
+      "id": "insufficient_budget_does_not_construct_prompt",
+      "user_request": "继续研究。",
+      "compaction_result": {
+        "status": "insufficient_budget",
+        "context": [
+          {"id": "instruction", "kind": "current_instruction", "text": "当前指令原文。"}
+        ],
+        "kept": [
+          {"id": "instruction", "kind": "current_instruction", "text": "当前指令原文。"}
+        ],
+        "compacted": [],
+        "dropped": [{"id": "history", "reason": "budget"}]
+      },
+      "system_rules": "Do not construct an incomplete prompt.",
+      "product_rules": "Use current context only.",
+      "expected": {
+        "status": "insufficient_budget",
+        "context_order": [],
+        "instructions": null,
+        "input_contains": [],
+        "input_excludes": []
+      }
+    }
+  ]
+}

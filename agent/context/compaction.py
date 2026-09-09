@@ -17,15 +17,23 @@ def compact_context(items: list[dict[str, Any]], budget: int) -> dict[str, Any]:
 
     original_size = sum(len(item["text"]) for item in items)
     if original_size <= budget:
-        return {"status": "ok", "kept": list(items), "compacted": [], "dropped": []}
+        return {
+            "status": "ok",
+            "context": list(items),
+            "kept": list(items),
+            "compacted": [],
+            "dropped": [],
+        }
 
     essential_size = sum(
         len(item["text"]) for item in items if item["kind"] in ESSENTIAL_KINDS
     )
     if essential_size > budget:
+        essential_items = [item for item in items if item["kind"] in ESSENTIAL_KINDS]
         return {
             "status": "insufficient_budget",
-            "kept": [item for item in items if item["kind"] in ESSENTIAL_KINDS],
+            "context": essential_items,
+            "kept": essential_items,
             "compacted": [],
             "dropped": [
                 {"id": item["id"], "reason": "budget"}
@@ -81,8 +89,10 @@ def compact_context(items: list[dict[str, Any]], budget: int) -> dict[str, Any]:
         size -= len(entries[index]["item"]["text"])
         entries[index] = {"status": "dropped", "item": item}
 
+    context = [entry["item"] for entry in entries if entry["status"] != "dropped"]
     return {
         "status": "ok",
+        "context": context,
         "kept": [entry["item"] for entry in entries if entry["status"] == "kept"],
         "compacted": [entry["item"] for entry in entries if entry["status"] == "compacted"],
         "dropped": [

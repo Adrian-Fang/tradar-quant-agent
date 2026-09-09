@@ -27,6 +27,16 @@ class ContextCompactionTests(unittest.TestCase):
                 case["id"],
             )
             self.assertEqual(result["dropped"], expected["dropped"], case["id"])
+            dropped_ids = {item["id"] for item in result["dropped"]}
+            self.assertEqual(
+                [item["id"] for item in result["context"]],
+                [
+                    item["id"]
+                    for item in case["items"]
+                    if item["id"] not in dropped_ids
+                ],
+                case["id"],
+            )
 
     def test_selected_item_metadata_does_not_trigger_reselection(self):
         item = {
