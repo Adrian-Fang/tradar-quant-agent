@@ -9,7 +9,7 @@ tradar/
 ├── agent/
 │   ├── core/               # Contracts、provider adapters、resource loaders
 │   ├── tools/              # Tool schemas、orchestration、tools、Tool Calling eval
-│   └── context/            # Context selection and Eval runner
+│   └── context/            # Context selection, compaction, and Eval runner
 ├── research/               # 唯一的量化研究引擎
 │   ├── panel.py            # 面板数据与 universe
 │   ├── factor_analyzer.py  # 因子分析

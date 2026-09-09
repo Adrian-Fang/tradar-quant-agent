@@ -16,7 +16,7 @@ from ..core.resources import expand_tokens, load_json
 from .runner import run_tool_calling
 
 
-EVAL_ARTIFACT_DIR = Path(__file__).resolve().parents[2] / "temp" / "agent_eval"
+EVAL_ARTIFACT_DIR = Path(__file__).resolve().parents[2] / "data" / "agent_eval"
 EVAL_ARTIFACTS = {
     "weights": EVAL_ARTIFACT_DIR / "weights.csv",
     "close": EVAL_ARTIFACT_DIR / "close.csv",

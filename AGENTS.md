@@ -27,7 +27,7 @@ Tradar 是一个量化研究、策略验证与生产信号平台，并正在逐�
 
 - `agent/core/`：共享 Tool contracts、ResearchRun、provider adapters 与资源加载。
 - `agent/tools/`：当前真实存在的 Tool Calling capability、production tools 与其 eval runner。
-- `agent/context/`：Context selection 与 Context Engineering eval runner。
+- `agent/context/`：Context selection、budget/compaction 与 Context Engineering eval runner。
 - `research/`：唯一 canonical quantitative research engine。
 - `scripts/`：具体研究实验与一次性研究入口。
 - `utils/`：数据加载与通用基础设施。
