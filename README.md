@@ -9,7 +9,8 @@ tradar/
 ├── agent/
 │   ├── core/               # Contracts、provider adapters、resource loaders
 │   ├── tools/              # Tool schemas、orchestration、tools、Tool Calling eval
-│   └── context/            # Context selection, compaction, and Eval runner
+│   ├── context/            # Context selection, compaction, construction, and Eval runner
+│   └── retrieval/          # Deterministic research knowledge retrieval
 ├── research/               # 唯一的量化研究引擎
 │   ├── panel.py            # 面板数据与 universe
 │   ├── factor_analyzer.py  # 因子分析
@@ -23,7 +24,7 @@ tradar/
 ├── resources/
 │   ├── eval/               # JSON datasets；不放执行代码
 │   ├── prompts/            # 稳定的 eval/system prompt
-│   └── knowledge/          # Research Record 约定，不含私有历史
+│   └── knowledge/          # Research Records 与 retrieval corpus，不含私有历史
 └── tests/                  # 公共能力回归测试
 ```
 

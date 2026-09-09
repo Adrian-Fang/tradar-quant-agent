@@ -1,0 +1,48 @@
+{
+  "cases": [
+    {
+      "id": "high52",
+      "query": "52-week high factor residual near-high penalty",
+      "limit": 1,
+      "expected_research_ids": ["RR-002"]
+    },
+    {
+      "id": "relative_reversal",
+      "query": "relative strength short-term reversal Excess20",
+      "limit": 1,
+      "expected_research_ids": ["RR-001"]
+    },
+    {
+      "id": "sequoia_x",
+      "query": "Sequoia-X source exact public scanner reproduction",
+      "limit": 1,
+      "expected_research_ids": ["RR-005"]
+    },
+    {
+      "id": "trading_cost_defaults",
+      "query": "asymmetric trading cost buy 10bp sell 15bp",
+      "limit": 1,
+      "expected_research_ids": ["RR-010"]
+    },
+    {
+      "id": "broad_breakout_shape",
+      "query": "breakout compression release event",
+      "limit": 3,
+      "expected_research_ids": ["RR-008", "RR-006", "RR-007"]
+    },
+    {
+      "id": "validated_multi_asset",
+      "query": "transaction cost defaults",
+      "market": "multi-asset",
+      "status": "validated",
+      "limit": 1,
+      "expected_research_ids": ["RR-010"]
+    },
+    {
+      "id": "unrelated_query",
+      "query": "quantum computing asteroid mining",
+      "limit": 5,
+      "expected_research_ids": []
+    }
+  ]
+}
