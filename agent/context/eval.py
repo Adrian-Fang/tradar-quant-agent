@@ -9,10 +9,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient
-from ..core.resources import load_jsonl, load_prompt
+from ..core.resources import load_json, load_prompt
 
 
-CONTEXT_CASES = load_jsonl("eval/context/cases.jsonl")
+CASES = load_json("eval/context_eval.json")
 PAIR_EXPECTATIONS = {
     "momentum_evidence_state": "should_change",
     "high52_result_availability": "should_change",
@@ -24,7 +24,7 @@ PAIR_EXPECTATIONS = {
 
 
 def _prompt(case: dict[str, Any]) -> dict[str, Any]:
-    pair_cases = [candidate for candidate in CONTEXT_CASES if candidate["pair_id"] == case["pair_id"]]
+    pair_cases = [candidate for candidate in CASES if candidate["pair_id"] == case["pair_id"]]
     allowed_state_tags = sorted({
         tag
         for candidate in pair_cases
@@ -45,7 +45,7 @@ def _prompt(case: dict[str, Any]) -> dict[str, Any]:
     })
     return {
         "model": "",
-        "instructions": load_prompt("prompts/context.eval.txt"),
+        "instructions": load_prompt("prompts/context_eval.md"),
         "input": json.dumps(
             {
                 "user_request": case["user_request"],
@@ -59,7 +59,7 @@ def _prompt(case: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-class ContextFixtureClient:
+class FixtureClient:
     """Deterministic harness response; no model call is made."""
 
     def __init__(self, case: dict[str, Any]) -> None:
@@ -145,7 +145,7 @@ def _response_shape_error(parsed: dict[str, Any] | None) -> str | None:
     return None
 
 
-def run_context_case(
+def run_case(
     case: dict[str, Any], *, client: Any, model: str,
 ) -> dict[str, Any]:
     payload = _prompt(case)
@@ -166,7 +166,7 @@ def run_context_case(
     }
 
 
-def score_context_case(
+def score_case(
     case: dict[str, Any], outcome: dict[str, Any], repeat: int,
 ) -> dict[str, Any]:
     parsed = outcome["parsed"]
@@ -284,7 +284,7 @@ def _pair_results(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return results
 
 
-def run_context_eval(
+def run_eval(
     provider: str = "fixture", repeats: int = 1,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if provider not in {"fixture", "openai", "deepseek"}:
@@ -306,15 +306,15 @@ def run_context_eval(
         else None
     )
     rows = []
-    for case in CONTEXT_CASES:
+    for case in CASES:
         for repeat in range(1, repeats + 1):
-            case_client = ContextFixtureClient(case) if provider == "fixture" else client
-            outcome = run_context_case(case, client=case_client, model=model)
-            rows.append(score_context_case(case, outcome, repeat))
+            case_client = FixtureClient(case) if provider == "fixture" else client
+            outcome = run_case(case, client=case_client, model=model)
+            rows.append(score_case(case, outcome, repeat))
     return rows, {
         "status": "complete",
         "provider": provider,
-        "cases": len(CONTEXT_CASES),
+        "cases": len(CASES),
         "repeats": repeats,
         "pair_results": _pair_results(rows),
     }
@@ -326,7 +326,7 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
-    rows, meta = run_context_eval(args.provider, args.repeats)
+    rows, meta = run_eval(args.provider, args.repeats)
     if meta["status"] == "skipped":
         print(f"Context Eval v1.1 skipped: {meta['reason']}")
         return

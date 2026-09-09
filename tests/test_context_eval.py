@@ -4,17 +4,17 @@ import json
 import unittest
 
 from agent.context.eval import (
-    CONTEXT_CASES,
+    CASES,
     _pair_results,
     _prompt,
-    run_context_case,
-    run_context_eval,
-    score_context_case,
+    run_case,
+    run_eval,
+    score_case,
 )
 
 
 def _case(case_id):
-    return next(case for case in CONTEXT_CASES if case["id"] == case_id)
+    return next(case for case in CASES if case["id"] == case_id)
 
 
 def _outcome(case, *, state=None, decision=None, actions=None, reason="test"):
@@ -35,8 +35,8 @@ def _outcome(case, *, state=None, decision=None, actions=None, reason="test"):
 
 class ContextEvalTests(unittest.TestCase):
     def test_cases_use_behavior_contract_schema(self):
-        self.assertEqual(len(CONTEXT_CASES), 13)
-        for case in CONTEXT_CASES:
+        self.assertEqual(len(CASES), 13)
+        for case in CASES:
             self.assertNotIn("expected_tool", case)
             self.assertNotIn("expected_behavior", case)
             for key in ("user_request", "context", "pair_id", "group", "failure_if", "why", "behavior_contract"):
@@ -63,7 +63,7 @@ class ContextEvalTests(unittest.TestCase):
     def test_prompt_uses_pair_tags_without_case_oracle(self):
         case = _case("momentum_strong_evidence")
         body = json.loads(_prompt(case)["input"])
-        pair_cases = [candidate for candidate in CONTEXT_CASES if candidate["pair_id"] == case["pair_id"]]
+        pair_cases = [candidate for candidate in CASES if candidate["pair_id"] == case["pair_id"]]
         expected_decisions = {
             tag
             for candidate in pair_cases
@@ -96,7 +96,7 @@ class ContextEvalTests(unittest.TestCase):
             self.assertNotIn(leaked_key, body)
 
     def test_fixture_passes_false_negative_cases(self):
-        rows, meta = run_context_eval("fixture", repeats=1)
+        rows, meta = run_eval("fixture", repeats=1)
         self.assertEqual(meta["status"], "complete")
         self.assertEqual(len(rows), 13)
         self.assertTrue(all(row["status"] == "pass" for row in rows))
@@ -114,7 +114,7 @@ class ContextEvalTests(unittest.TestCase):
 
     def test_missing_state_is_partial_but_not_case_failure(self):
         case = _case("momentum_strong_evidence")
-        row = score_context_case(
+        row = score_case(
             case,
             _outcome(case, state=case["behavior_contract"]["state"]["must_recognize"][:1]),
             repeat=1,
@@ -128,29 +128,29 @@ class ContextEvalTests(unittest.TestCase):
         state = case["behavior_contract"]["state"]["must_recognize"] + [
             case["behavior_contract"]["state"]["must_not_recognize"][0]
         ]
-        row = score_context_case(case, _outcome(case, state=state), repeat=1)
+        row = score_case(case, _outcome(case, state=state), repeat=1)
         self.assertEqual(row["state_status"], "fail")
         self.assertEqual(row["status"], "fail")
         self.assertFalse(row["human_review_required"])
 
     def test_decision_and_action_contract_violations_fail(self):
         case = _case("momentum_clean_context")
-        bad_decision = score_context_case(case, _outcome(case, decision="stop_and_reassess"), repeat=1)
+        bad_decision = score_case(case, _outcome(case, decision="stop_and_reassess"), repeat=1)
         self.assertEqual(bad_decision["status"], "fail")
-        bad_action = score_context_case(case, _outcome(case, actions=[]), repeat=1)
+        bad_action = score_case(case, _outcome(case, actions=[]), repeat=1)
         self.assertEqual(bad_action["status"], "fail")
-        empty_decision = score_context_case(case, _outcome(case, decision=""), repeat=1)
+        empty_decision = score_case(case, _outcome(case, decision=""), repeat=1)
         self.assertEqual(empty_decision["status"], "fail")
 
     def test_malformed_and_provider_errors_require_human_review(self):
-        case = CONTEXT_CASES[0]
+        case = CASES[0]
 
         class MalformedClient:
             def create(self, payload):
                 return {"output_text": "{}"}
 
-        malformed = run_context_case(case, client=MalformedClient(), model="fixture")
-        malformed_row = score_context_case(case, malformed, repeat=1)
+        malformed = run_case(case, client=MalformedClient(), model="fixture")
+        malformed_row = score_case(case, malformed, repeat=1)
         self.assertEqual(malformed_row["status"], "human_review")
         self.assertTrue(malformed_row["human_review_required"])
 
@@ -158,14 +158,14 @@ class ContextEvalTests(unittest.TestCase):
             def create(self, payload):
                 raise RuntimeError("provider unavailable")
 
-        provider_error = run_context_case(case, client=ProviderErrorClient(), model="fixture")
-        provider_row = score_context_case(case, provider_error, repeat=1)
+        provider_error = run_case(case, client=ProviderErrorClient(), model="fixture")
+        provider_row = score_case(case, provider_error, repeat=1)
         self.assertEqual(provider_row["status"], "human_review")
         self.assertEqual(provider_row["failure_type"], "provider_error")
 
     def test_acceptable_alternatives_and_nonblocking_missing_preference(self):
         momentum = _case("momentum_not_started")
-        momentum_row = score_context_case(
+        momentum_row = score_case(
             momentum,
             _outcome(momentum, decision="blocked_pending_factor_evaluation", actions=[]),
             repeat=1,
@@ -173,7 +173,7 @@ class ContextEvalTests(unittest.TestCase):
         self.assertEqual(momentum_row["status"], "pass")
 
         high52 = _case("high52_no_result")
-        high52_row = score_context_case(
+        high52_row = score_case(
             high52,
             _outcome(high52, decision="blocked_missing_result", actions=["start_high52_evaluation"]),
             repeat=1,
@@ -181,7 +181,7 @@ class ContextEvalTests(unittest.TestCase):
         self.assertEqual(high52_row["status"], "pass")
 
         no_validation = _case("current_no_extra_validation")
-        no_validation_row = score_context_case(
+        no_validation_row = score_case(
             no_validation,
             _outcome(no_validation, decision="only_restate_old_result", actions=[]),
             repeat=1,
@@ -190,7 +190,7 @@ class ContextEvalTests(unittest.TestCase):
 
     def test_unspecified_metric_block_is_a_contract_failure(self):
         case = _case("strategy_compare_metrics_unspecified")
-        row = score_context_case(
+        row = score_case(
             case,
             _outcome(case, decision="blocked_for_unspecified_metric", actions=[]),
             repeat=1,
@@ -205,12 +205,12 @@ class ContextEvalTests(unittest.TestCase):
         broken_state = clean["behavior_contract"]["state"]["must_recognize"] + [
             clean["behavior_contract"]["state"]["must_not_recognize"][0]
         ]
-        broken = score_context_case(
+        broken = score_case(
             clean,
             _outcome(clean, state=broken_state, actions=["propose_strategy_backtest"]),
             repeat=1,
         )
-        valid = score_context_case(
+        valid = score_case(
             distractors,
             _outcome(distractors, actions=["propose_strategy_backtest"]),
             repeat=1,
@@ -220,7 +220,7 @@ class ContextEvalTests(unittest.TestCase):
         self.assertEqual(pair["repeat_results"][0]["status"], "pass")
 
     def test_pair_results_are_per_repeat_and_ignore_optional_actions(self):
-        rows, meta = run_context_eval("fixture", repeats=3)
+        rows, meta = run_eval("fixture", repeats=3)
         pair_results = {result["pair_id"]: result for result in meta["pair_results"]}
         momentum = pair_results["momentum_evidence_state"]
         self.assertEqual(len(momentum["repeat_results"]), 3)
@@ -228,12 +228,12 @@ class ContextEvalTests(unittest.TestCase):
 
         clean = _case("momentum_clean_context")
         distractors = _case("momentum_with_distractors")
-        with_optional = score_context_case(
+        with_optional = score_case(
             clean,
             _outcome(clean, actions=["propose_strategy_backtest", "use_momentum_result"]),
             repeat=1,
         )
-        without_optional = score_context_case(
+        without_optional = score_case(
             distractors,
             _outcome(distractors, actions=["propose_strategy_backtest"]),
             repeat=1,

@@ -27,7 +27,7 @@ Tradar 是一个量化研究、策略验证与生产信号平台，并正在逐�
 
 - `agent/core/`：共享 Tool contracts、ResearchRun、provider adapters 与资源加载。
 - `agent/tools/`：当前真实存在的 Tool Calling capability、production tools 与其 eval runner。
-- `agent/context/`：Context Engineering eval runner。
+- `agent/context/`：Context selection 与 Context Engineering eval runner。
 - `research/`：唯一 canonical quantitative research engine。
 - `scripts/`：具体研究实验与一次性研究入口。
 - `utils/`：数据加载与通用基础设施。
@@ -233,7 +233,7 @@ python -m agent.tools.eval --provider fixture --repeats 1
 python -m agent.context.eval --provider fixture --repeats 1
 ```
 
-`resources/eval/` 中的 JSONL 是 dataset，`agent/*/eval.py` 是 runner，`agent/tools/tools.py` 是 production capability。三者保持分离；远程 DeepSeek/OpenAI eval 由调用者自行运行。
+`resources/eval/` 中的 JSON 是 dataset，`agent/*/eval.py` 是 runner，`agent/tools/tools.py` 是 production capability。三者保持分离；远程 DeepSeek/OpenAI eval 由调用者自行运行。
 
 ## 9. 修改公共研究能力时
 

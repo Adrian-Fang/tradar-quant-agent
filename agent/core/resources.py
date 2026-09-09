@@ -12,21 +12,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 RESOURCE_ROOT = REPO_ROOT / "resources"
 
 
-def load_jsonl(relative_path: str) -> tuple[dict[str, Any], ...]:
-    path = RESOURCE_ROOT / relative_path
-    cases = []
-    with path.open(encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
-            if not line.strip():
-                continue
-            try:
-                value = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"invalid JSONL at {path}:{line_number}: {exc}") from exc
-            if not isinstance(value, dict):
-                raise ValueError(f"JSONL item at {path}:{line_number} must be an object")
-            cases.append(value)
-    return tuple(cases)
+def load_json(relative_path: str) -> tuple[dict[str, Any], ...]:
+    value = json.loads((RESOURCE_ROOT / relative_path).read_text(encoding="utf-8"))
+    return tuple(value["cases"])
 
 
 def load_prompt(relative_path: str) -> str:
@@ -45,4 +33,4 @@ def expand_tokens(value: Any, replacements: Mapping[str, str]) -> Any:
     return value
 
 
-__all__ = ["REPO_ROOT", "RESOURCE_ROOT", "expand_tokens", "load_jsonl", "load_prompt"]
+__all__ = ["REPO_ROOT", "RESOURCE_ROOT", "expand_tokens", "load_json", "load_prompt"]

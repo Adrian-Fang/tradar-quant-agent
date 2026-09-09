@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from agent import ResearchRun, ToolResult, evaluate_factor, inspect_universe, run_backtest
+from agent.core.contracts import ResearchRun, ToolResult
+from agent.tools.tools import evaluate_factor, inspect_universe, run_backtest
 from research.factor_analyzer import FactorAnalyzer
 from research.metrics import calc_metrics
 from research.vector_backtest import BacktestConfig, run_backtest as canonical_run_backtest

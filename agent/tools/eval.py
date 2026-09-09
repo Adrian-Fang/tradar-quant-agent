@@ -12,7 +12,7 @@ from typing import Any
 import pandas as pd
 
 from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient
-from ..core.resources import expand_tokens, load_jsonl
+from ..core.resources import expand_tokens, load_json
 from .runner import run_tool_calling
 
 
@@ -24,9 +24,9 @@ EVAL_ARTIFACTS = {
 }
 
 _ARTIFACT_TOKEN = "${EVAL_ARTIFACT_DIR}"
-BENCHMARK_CASES = tuple(
+CASES = tuple(
     expand_tokens(case, {_ARTIFACT_TOKEN: str(EVAL_ARTIFACT_DIR)})
-    for case in load_jsonl("eval/tool_calling/cases.jsonl")
+    for case in load_json("eval/tool_calling.json")
 )
 
 
@@ -44,7 +44,7 @@ def _prepare_eval_artifacts() -> dict[str, Path]:
     return EVAL_ARTIFACTS
 
 
-class FixtureToolCaller:
+class FixtureClient:
     """Deterministic model-call fixture; execution still uses real agent tools."""
 
     def __init__(self, tool_name: str, arguments: dict[str, Any]) -> None:
@@ -135,7 +135,7 @@ def _skipped_metrics(provider: str, repeats: int, reason: str) -> dict[str, Any]
         "scope": "agent_eval" if provider != "fixture" else "test_harness",
         "status": "skipped",
         "reason": reason,
-        "cases": len(BENCHMARK_CASES),
+        "cases": len(CASES),
         "repeats": repeats,
         "attempts": 0,
         "tool_selection_accuracy": None,
@@ -146,7 +146,7 @@ def _skipped_metrics(provider: str, repeats: int, reason: str) -> dict[str, Any]
     }
 
 
-def run_benchmark(provider: str = "deepseek", repeats: int = 3) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def run_eval(provider: str = "deepseek", repeats: int = 3) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if provider not in {"fixture", "openai", "deepseek"}:
         raise ValueError(f"unsupported provider: {provider}")
     if isinstance(repeats, bool) or not isinstance(repeats, int) or repeats < 1:
@@ -163,10 +163,10 @@ def run_benchmark(provider: str = "deepseek", repeats: int = 3) -> tuple[list[di
         else None
     )
     rows = []
-    for case in BENCHMARK_CASES:
+    for case in CASES:
         for repeat in range(1, repeats + 1):
             case_client = (
-                FixtureToolCaller(case["expected_tool"], case["expected_args"])
+                FixtureClient(case["expected_tool"], case["expected_args"])
                 if provider == "fixture" else client
             )
             outcome = run_tool_calling(
@@ -178,7 +178,7 @@ def run_benchmark(provider: str = "deepseek", repeats: int = 3) -> tuple[list[di
             rows.append(score_case(case, outcome, repeat))
 
     case_summaries = []
-    for case in BENCHMARK_CASES:
+    for case in CASES:
         attempts = [row for row in rows if row["case"] == case["id"]]
         selections = sorted({row["selected"] for row in attempts})
         case_summaries.append({
@@ -216,7 +216,7 @@ def run_benchmark(provider: str = "deepseek", repeats: int = 3) -> tuple[list[di
         "provider": provider,
         "scope": "test_harness" if provider == "fixture" else "agent_eval",
         "status": "complete",
-        "cases": len(BENCHMARK_CASES),
+        "cases": len(CASES),
         "repeats": repeats,
         "attempts": len(rows),
         "tool_selection_accuracy": sum(row["selection_ok"] for row in rows) / len(rows),
@@ -243,7 +243,7 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--verbose", action="store_true", help="print detailed case and attempt JSON")
     args = parser.parse_args()
-    rows, metrics = run_benchmark(args.provider, repeats=args.repeats)
+    rows, metrics = run_eval(args.provider, repeats=args.repeats)
     print(f"Agent Eval — {args.provider} | {metrics['cases']} cases × {args.repeats}")
     if metrics["status"] != "complete":
         print(f"Status: {metrics['status']}")

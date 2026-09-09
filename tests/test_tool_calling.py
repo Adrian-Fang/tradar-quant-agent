@@ -5,15 +5,16 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from agent import DeepSeekChatClient, TOOL_SCHEMAS, ToolResult, run_backtest as agent_run_backtest, run_tool_calling
-from agent.core.providers import OpenAIResponsesClient
+from agent.core.contracts import ToolResult
+from agent.core.providers import DeepSeekChatClient, OpenAIResponsesClient
 from agent.tools.eval import (
-    BENCHMARK_CASES,
+    CASES,
     EVAL_ARTIFACTS,
     _prepare_eval_artifacts,
     score_case,
 )
-from agent.tools.runner import _request_payload
+from agent.tools.runner import TOOL_SCHEMAS, _request_payload, run_tool_calling
+from agent.tools.tools import run_backtest as agent_run_backtest
 
 
 class FakeClient:
@@ -154,12 +155,12 @@ class ToolCallingTests(unittest.TestCase):
         self.assertIs(client.client, fake_sdk)
 
     def test_benchmark_covers_three_tool_boundaries(self):
-        self.assertEqual(len(BENCHMARK_CASES), 8)
+        self.assertEqual(len(CASES), 8)
         self.assertEqual(
-            {case["expected_tool"] for case in BENCHMARK_CASES},
+            {case["expected_tool"] for case in CASES},
             {"inspect_universe", "evaluate_factor", "run_backtest"},
         )
-        case = next(case for case in BENCHMARK_CASES if case["id"] == "strategy_backtest_cost_override")
+        case = next(case for case in CASES if case["id"] == "strategy_backtest_cost_override")
         row = score_case(
             case,
             {

@@ -112,7 +112,7 @@ TOOL_FUNCTIONS = {
 def _request_payload(user_request: str, model: str) -> dict[str, Any]:
     return {
         "model": model,
-        "instructions": load_prompt("prompts/tool_calling.system.txt"),
+        "instructions": load_prompt("prompts/tool_calling.md"),
         "input": user_request,
         "tools": [dict(schema) for schema in TOOL_SCHEMAS],
         "tool_choice": "required",
