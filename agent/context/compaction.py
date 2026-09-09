@@ -44,16 +44,18 @@ def compact_context(items: list[dict[str, Any]], budget: int) -> dict[str, Any]:
         if size <= budget:
             break
         item = items[index]
+        if item["kind"] in ESSENTIAL_KINDS:
+            continue
         compacted_lines = []
         seen_structured_lines = set()
         previous_blank = False
         for raw_line in item["text"].splitlines():
-            line = " ".join(raw_line.split())
-            if not line:
+            if not raw_line.strip():
                 if not previous_blank:
                     compacted_lines.append("")
                 previous_blank = True
                 continue
+            line = raw_line
             if "=" in line and line in seen_structured_lines:
                 continue
             if "=" in line:
@@ -61,7 +63,9 @@ def compact_context(items: list[dict[str, Any]], budget: int) -> dict[str, Any]:
             compacted_lines.append(line)
             previous_blank = False
 
-        compacted_text = "\n".join(compacted_lines).strip()
+        if compacted_lines and compacted_lines[-1] == "":
+            compacted_lines.pop()
+        compacted_text = "\n".join(compacted_lines)
         if compacted_text != item["text"]:
             compacted_item = dict(item)
             compacted_item["text"] = compacted_text

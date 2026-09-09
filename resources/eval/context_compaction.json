@@ -46,7 +46,7 @@
         {"id": "instruction", "kind": "current_instruction", "text": "保留研究记录。"},
         {"id": "record", "kind": "retrieved_knowledge", "text": "research_id=run-42\nstatus=validated\nresult=not ready for production\nmetric=0.035   on   2026-08-31\n\n\nstatus=validated\n"}
       ],
-      "expected": {"status": "ok", "kept": ["instruction"], "compacted": {"record": "research_id=run-42\nstatus=validated\nresult=not ready for production\nmetric=0.035 on 2026-08-31"}, "dropped": []}
+      "expected": {"status": "ok", "kept": ["instruction"], "compacted": {"record": "research_id=run-42\nstatus=validated\nresult=not ready for production\nmetric=0.035   on   2026-08-31"}, "dropped": []}
     },
     {
       "id": "essential_context_over_budget",
@@ -57,6 +57,16 @@
         {"id": "history", "kind": "history", "text": "old history"}
       ],
       "expected": {"status": "insufficient_budget", "kept": ["instruction", "state"], "compacted": {}, "dropped": [{"id": "history", "reason": "budget"}]}
+    },
+    {
+      "id": "essential_text_stays_verbatim",
+      "budget": 50,
+      "items": [
+        {"id": "instruction", "kind": "current_instruction", "text": "do   not rerun\n\n\ndo   not rerun\n"},
+        {"id": "state", "kind": "task_state", "text": "status=complete"},
+        {"id": "history", "kind": "history", "text": "history=long unrelated context"}
+      ],
+      "expected": {"status": "ok", "kept": ["instruction", "state"], "compacted": {}, "dropped": [{"id": "history", "reason": "budget"}]}
     }
   ]
 }
