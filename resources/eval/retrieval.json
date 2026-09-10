@@ -81,6 +81,54 @@
       "query": "When price pushes beyond its recent range while trading activity is noticeably stronger, is the apparent edge still there by the next market open?",
       "relevant_ids": ["RR-006"],
       "slice": "semantic_challenge"
+    },
+    {
+      "id": "negative_unrelated_product",
+      "query": "How should a product team prioritize features for the next release?",
+      "relevant_ids": [],
+      "slice": "abstention_negative"
+    },
+    {
+      "id": "negative_dividend_yield",
+      "query": "Does a high dividend yield predict stronger returns over the next quarter?",
+      "relevant_ids": [],
+      "slice": "abstention_negative"
+    },
+    {
+      "id": "negative_earnings_revision",
+      "query": "Do upward analyst earnings revisions predict future stock returns?",
+      "relevant_ids": [],
+      "slice": "abstention_negative"
+    },
+    {
+      "id": "negative_52week_low",
+      "query": "Do stocks trading near their lowest level of the past year tend to rebound?",
+      "relevant_ids": [],
+      "slice": "abstention_negative"
+    },
+    {
+      "id": "negative_low_volume_breakout",
+      "query": "Does a price breakout on unusually weak trading activity have predictive value?",
+      "relevant_ids": [],
+      "slice": "abstention_negative"
+    },
+    {
+      "id": "negative_min_return_anomaly",
+      "query": "Does an unusually large one-day loss during the recent month predict subsequent returns?",
+      "relevant_ids": [],
+      "slice": "abstention_negative"
+    },
+    {
+      "id": "negative_slippage_turnover",
+      "query": "How should market-impact slippage scale with portfolio turnover?",
+      "relevant_ids": [],
+      "slice": "abstention_negative"
+    },
+    {
+      "id": "negative_intraday_vwap",
+      "query": "Do prices reverting toward VWAP intraday provide a persistent edge?",
+      "relevant_ids": [],
+      "slice": "abstention_negative"
     }
   ]
 }
