@@ -3,10 +3,87 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
 import os
 from typing import Any
+from urllib import request
 
 from openai import OpenAI
+
+
+class OllamaEmbeddingClient:
+    """Local Ollama embeddings adapter using the /api/embed endpoint."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        model: str | None = None,
+        timeout: float = 120.0,
+    ) -> None:
+        self.base_url = (base_url or os.getenv(
+            "OLLAMA_BASE_URL", "http://localhost:11434"
+        )).rstrip("/")
+        self.model = model or os.getenv(
+            "OLLAMA_EMBEDDING_MODEL", "qwen3-embedding:0.6b"
+        )
+        self.timeout = timeout
+
+    def __call__(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        body = json.dumps({"model": self.model, "input": texts}).encode("utf-8")
+        http_request = request.Request(
+            f"{self.base_url}/api/embed",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with request.urlopen(http_request, timeout=self.timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"Ollama embedding request failed: {exc}") from exc
+
+        embeddings = payload.get("embeddings") if isinstance(payload, dict) else None
+        if not isinstance(embeddings, list) or len(embeddings) != len(texts):
+            raise RuntimeError("Ollama response contained an invalid embeddings batch")
+        return embeddings
+
+
+class OpenAIEmbeddingClient:
+    """OpenAI embeddings adapter shared by retrieval capabilities."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        timeout: float = 60.0,
+        sdk_client: Any = None,
+    ) -> None:
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("OPENAI_API_KEY is required for semantic retrieval")
+        self.model = model or os.getenv(
+            "OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"
+        )
+        client_args: dict[str, Any] = {
+            "api_key": self.api_key,
+            "timeout": timeout,
+        }
+        if base_url := os.getenv("OPENAI_BASE_URL"):
+            client_args["base_url"] = base_url
+        self.client = sdk_client or OpenAI(**client_args)
+
+    def __call__(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        response = self.client.embeddings.create(model=self.model, input=texts)
+        return [
+            item.embedding
+            for item in sorted(response.data, key=lambda item: item.index)
+        ]
 
 
 class OpenAIResponsesClient:
@@ -112,4 +189,9 @@ class DeepSeekChatClient:
         }
 
 
-__all__ = ["DeepSeekChatClient", "OpenAIResponsesClient"]
+__all__ = [
+    "DeepSeekChatClient",
+    "OllamaEmbeddingClient",
+    "OpenAIEmbeddingClient",
+    "OpenAIResponsesClient",
+]

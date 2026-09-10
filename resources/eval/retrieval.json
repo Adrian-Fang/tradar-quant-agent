@@ -51,6 +51,36 @@
       "id": "unrelated_query",
       "query": "quantum computing asteroid mining",
       "relevant_ids": []
+    },
+    {
+      "id": "semantic_rr001_giveback",
+      "query": "A stock that has run far ahead of its benchmark may give back gains over the next few weeks; what does the research say?",
+      "relevant_ids": ["RR-001"],
+      "slice": "semantic_challenge"
+    },
+    {
+      "id": "semantic_rr002_best_level",
+      "query": "A name is near its own best level of the last year; does that position usually keep paying off?",
+      "relevant_ids": ["RR-002"],
+      "slice": "semantic_challenge"
+    },
+    {
+      "id": "semantic_rr010_friction",
+      "query": "In a historical simulation, what friction should be charged on entry and exit separately?",
+      "relevant_ids": ["RR-010"],
+      "slice": "semantic_challenge"
+    },
+    {
+      "id": "semantic_rr003_surge",
+      "query": "If one day in a stock's recent trading history stands out with an extreme upward move, does the stock tend to lag afterward?",
+      "relevant_ids": ["RR-003"],
+      "slice": "semantic_challenge"
+    },
+    {
+      "id": "semantic_rr006_followthrough",
+      "query": "When price pushes beyond its recent range while trading activity is noticeably stronger, is the apparent edge still there by the next market open?",
+      "relevant_ids": ["RR-006"],
+      "slice": "semantic_challenge"
     }
   ]
 }
