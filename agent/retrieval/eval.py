@@ -31,6 +31,23 @@ def run_case(
         0,
     )
     row["reciprocal_rank"] = 1 / first_rank if first_rank else 0.0
+    if relevant_ids:
+        row["first_relevant_rank"] = first_rank or None
+        row["first_relevant_research_id"] = (
+            result_ids[first_rank - 1] if first_rank else None
+        )
+        row["first_relevant_score"] = (
+            result_scores[first_rank - 1]
+            if first_rank and result_scores is not None
+            else None
+        )
+    else:
+        row["top1_research_id"] = result_ids[0] if result_ids else None
+        row["top1_score"] = (
+            result_scores[0]
+            if result_ids and result_scores is not None
+            else None
+        )
 
     for k in k_values:
         if not relevant_ids:
@@ -75,18 +92,22 @@ def run_eval(k_values: tuple[int, ...] = (1, 3, 5), retriever=retrieve) -> dict:
     aggregate = {}
     for name, group in groups.items():
         relevant_rows = [row for row in group if row["relevant"]]
-        macro_by_k = {}
-        for k in k_values:
-            macro_by_k[str(k)] = {
-                "hit@k": sum(row[f"hit@{k}"] for row in relevant_rows) / len(relevant_rows),
-                "recall@k": sum(row[f"recall@{k}"] for row in relevant_rows) / len(relevant_rows),
-                "precision@k": sum(row[f"precision@{k}"] for row in relevant_rows) / len(relevant_rows),
-            }
+        macro_by_k = None
+        mrr = None
+        if relevant_rows:
+            macro_by_k = {}
+            for k in k_values:
+                macro_by_k[str(k)] = {
+                    "hit@k": sum(row[f"hit@{k}"] for row in relevant_rows) / len(relevant_rows),
+                    "recall@k": sum(row[f"recall@{k}"] for row in relevant_rows) / len(relevant_rows),
+                    "precision@k": sum(row[f"precision@{k}"] for row in relevant_rows) / len(relevant_rows),
+                }
+            mrr = sum(row["reciprocal_rank"] for row in relevant_rows) / len(relevant_rows)
 
         no_relevance_rows = [row for row in group if not row["relevant"]]
         false_positive_count = sum(row["false_positive"] for row in no_relevance_rows)
         aggregate[name] = {
-            "mrr": sum(row["reciprocal_rank"] for row in relevant_rows) / len(relevant_rows),
+            "mrr": mrr,
             "by_k": macro_by_k,
             "no_relevance": {
                 "count": len(no_relevance_rows),
@@ -111,42 +132,89 @@ def run_eval(k_values: tuple[int, ...] = (1, 3, 5), retriever=retrieve) -> dict:
     }
 
 
-def print_report(label: str, evaluation: dict) -> None:
-    k_values = evaluation["k_values"]
-    metric_headers = [
-        f"{metric}@{k}"
-        for metric in ("Hit", "Recall", "Precision")
-        for k in k_values
+def threshold_sweep(
+    rows: list[dict],
+    thresholds: tuple[float, ...] = (0.0, 0.25, 0.5, 0.75, 1.0),
+) -> list[dict]:
+    positive_rows = [row for row in rows if row["relevant"]]
+    negative_rows = [row for row in rows if not row["relevant"]]
+    return [
+        {
+            "threshold": threshold,
+            "positive_retention": (
+                sum(
+                    row["first_relevant_score"] is not None
+                    and row["first_relevant_score"] >= threshold
+                    for row in positive_rows
+                ) / len(positive_rows)
+                if positive_rows else 0.0
+            ),
+            "negative_rejection": (
+                sum(
+                    row["top1_score"] is None
+                    or row["top1_score"] < threshold
+                    for row in negative_rows
+                ) / len(negative_rows)
+                if negative_rows else 0.0
+            ),
+        }
+        for threshold in thresholds
     ]
-    print(f"\n{label}")
-    print("slice | case | relevant | top results | " + " | ".join(metric_headers) + " | RR")
+
+
+def print_report(label: str, evaluation: dict, *, abstention_analysis: bool = False) -> None:
+    k_values = evaluation["k_values"]
+    print(f"\n=== {label} ===")
+    print("\nCase Results")
+    print("case | relevant | top results")
+    for row in evaluation["cases"]:
+        scores = row.get("top_scores")
+        top_results = (
+            [
+                f"{result_id}({score:.4f})" if score is not None else result_id
+                for result_id, score in zip(row["top_results"], scores)
+            ]
+            if scores is not None
+            else row["top_results"]
+        )
+        print(f"{row['case']} | {row['relevant']} | {top_results}")
+
+    metric_columns = [
+        ("hit", k) for k in (1, 3) if k in k_values
+    ] + [
+        ("recall", k) for k in (3, 5) if k in k_values
+    ]
+    print("\nCore Case Metrics")
+    print(
+        "slice | case | "
+        + " | ".join(f"{metric.title()}@{k}" for metric, k in metric_columns)
+        + " | RR"
+    )
     for row in evaluation["cases"]:
         metrics = [
-            f"{row[f'{metric}@{k}']:.3f}"
-            if row[f"{metric}@{k}"] is not None else "-"
-            for metric in ("hit", "recall", "precision")
-            for k in k_values
-        ]
-        top_results = [
-            f"{result_id}({score:.4f})" if score is not None else result_id
-            for result_id, score in zip(row["top_results"], row["top_scores"])
+            "-" if row[f"{metric}@{k}"] is None else f"{row[f'{metric}@{k}']:.3f}"
+            for metric, k in metric_columns
         ]
         print(
-            f"{row['slice']} | {row['case']} | {row['relevant']} | {top_results} | "
-            f"{' | '.join(metrics)} | {row['reciprocal_rank']:.3f}"
+            f"{row['slice']} | {row['case']} | {' | '.join(metrics)} | "
+            f"{row['reciprocal_rank']:.3f}"
         )
 
+    print("\nMacro Metrics")
     macro_groups = [("overall", evaluation["macro"])] + list(evaluation["slices"].items())
     for name, macro in macro_groups:
-        print(f"\n{name} macro metrics (relevant queries only):")
-        for k in k_values:
-            metrics = macro["by_k"][str(k)]
-            print(
-                f"K={k} | Hit@K={metrics['hit@k']:.3f} | "
-                f"Recall@K={metrics['recall@k']:.3f} | "
-                f"Precision@K={metrics['precision@k']:.3f}"
-            )
-        print(f"MRR={macro['mrr']:.3f}")
+        print(f"{name} (relevant queries only):")
+        if macro["by_k"] is None:
+            print("No positive queries; relevance metrics not calculated")
+        else:
+            for k in k_values:
+                metrics = macro["by_k"][str(k)]
+                print(
+                    f"K={k} | Hit@K={metrics['hit@k']:.3f} | "
+                    f"Recall@K={metrics['recall@k']:.3f} | "
+                    f"Precision@K={metrics['precision@k']:.3f}"
+                )
+            print(f"MRR={macro['mrr']:.3f}")
 
         no_relevance = macro["no_relevance"]
         print(
@@ -157,9 +225,46 @@ def print_report(label: str, evaluation: dict) -> None:
             f"empty={no_relevance['empty_result_count']}"
         )
 
+    if not abstention_analysis:
+        return
+
+    print("\nAbstention Analysis")
+    print("Positive relevant results")
+    print("case | relevant_id | rank | score")
+    for row in evaluation["cases"]:
+        if row["relevant"]:
+            score = row["first_relevant_score"]
+            score_text = f"{score:.4f}" if score is not None else "-"
+            relevant_id = row["first_relevant_research_id"] or "-"
+            print(
+                f"{row['case']} | {relevant_id} | "
+                f"{row['first_relevant_rank'] or '-'} | {score_text}"
+            )
+
+    print("Negative top-1 results")
+    print("case | top1_id | score")
+    for row in evaluation["cases"]:
+        if not row["relevant"]:
+            score = row["top1_score"]
+            score_text = f"{score:.4f}" if score is not None else "-"
+            top1_id = row["top1_research_id"] or "-"
+            print(
+                f"{row['case']} | {top1_id} | "
+                f"{score_text}"
+            )
+
+    print("Threshold Sweep (offline analysis only)")
+    print("Threshold | Positive Retention | Negative Rejection")
+    for result in threshold_sweep(evaluation["cases"]):
+        print(
+            f"{result['threshold']:.2f} | "
+            f"{result['positive_retention']:.3f} | "
+            f"{result['negative_rejection']:.3f}"
+        )
+
 
 def main() -> None:
-    print_report("Lexical retrieval", run_eval())
+    print_report("Lexical Retrieval", run_eval())
     try:
         embedder = OllamaEmbeddingClient()
         prepared_corpus = prepare_semantic_corpus(embedder=embedder)
@@ -174,7 +279,11 @@ def main() -> None:
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"\nSemantic retrieval | skipped: {exc}")
     else:
-        print_report("Semantic retrieval (Ollama)", semantic_eval)
+        print_report(
+            "Semantic Retrieval (Ollama)",
+            semantic_eval,
+            abstention_analysis=True,
+        )
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import redirect_stdout
+from io import StringIO
 import json
 import unittest
 from types import SimpleNamespace
@@ -8,7 +10,7 @@ from unittest.mock import patch
 from agent.core.resources import load_json
 from agent.core.providers import OllamaEmbeddingClient, OpenAIEmbeddingClient
 from agent.retrieval import load_research_records, retrieve
-from agent.retrieval.eval import run_eval, run_case
+from agent.retrieval.eval import print_report, run_eval, run_case, threshold_sweep
 from agent.retrieval.semantic import prepare_semantic_corpus, retrieve_semantic
 from agent.retrieval.retrieval import _tokens
 
@@ -94,11 +96,15 @@ class RetrievalTests(unittest.TestCase):
             self.assertNotIn("expected_research_ids", case)
         self.assertEqual(
             {case.get("slice", "baseline") for case in CASES},
-            {"baseline", "semantic_challenge"},
+            {"baseline", "semantic_challenge", "abstention_negative"},
         )
         self.assertEqual(
             sum(case.get("slice") == "semantic_challenge" for case in CASES),
             5,
+        )
+        self.assertEqual(
+            sum(case.get("slice") == "abstention_negative" for case in CASES),
+            8,
         )
 
     def test_score_case_math_for_multi_relevant_query(self):
@@ -148,7 +154,7 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(first["k_values"], [1, 3, 5])
         no_relevance = first["macro"]["no_relevance"]
-        self.assertEqual(no_relevance["count"], 1)
+        self.assertEqual(no_relevance["count"], 9)
         self.assertEqual(
             no_relevance["false_positive_count"],
             sum(
@@ -164,11 +170,69 @@ class RetrievalTests(unittest.TestCase):
         evaluation = run_eval()
         self.assertEqual(
             set(evaluation["slices"]),
-            {"baseline", "semantic_challenge"},
+            {"baseline", "semantic_challenge", "abstention_negative"},
         )
         self.assertEqual(evaluation["slices"]["baseline"]["no_relevance"]["count"], 1)
         self.assertEqual(evaluation["slices"]["semantic_challenge"]["no_relevance"]["count"], 0)
         self.assertIn("mrr", evaluation["slices"]["semantic_challenge"])
+        negative = evaluation["slices"]["abstention_negative"]
+        self.assertIsNone(negative["by_k"])
+        self.assertIsNone(negative["mrr"])
+
+    def test_score_case_records_positive_and_negative_score_metadata(self):
+        positive = run_case(
+            {"id": "positive", "relevant_ids": ["RR-A"]},
+            ["RR-X", "RR-A"],
+            (1, 3),
+            [0.2, 0.8],
+        )
+        self.assertEqual(positive["first_relevant_rank"], 2)
+        self.assertEqual(positive["first_relevant_research_id"], "RR-A")
+        self.assertEqual(positive["first_relevant_score"], 0.8)
+
+        negative = run_case(
+            {"id": "negative", "relevant_ids": []},
+            ["RR-X"],
+            (1,),
+            [0.4],
+        )
+        self.assertEqual(negative["top1_research_id"], "RR-X")
+        self.assertEqual(negative["top1_score"], 0.4)
+
+        empty = run_case({"id": "empty", "relevant_ids": []}, [], (1,), [])
+        self.assertIsNone(empty["top1_research_id"])
+        self.assertIsNone(empty["top1_score"])
+
+    def test_threshold_sweep_math(self):
+        rows = [
+            {"relevant": ["RR-A"], "first_relevant_score": 0.8},
+            {"relevant": ["RR-B"], "first_relevant_score": None},
+            {"relevant": [], "top1_score": 0.4},
+            {"relevant": [], "top1_score": None},
+        ]
+        result = threshold_sweep(rows, (0.5, 0.9))
+        self.assertEqual(result[0]["positive_retention"], 0.5)
+        self.assertEqual(result[0]["negative_rejection"], 1.0)
+        self.assertEqual(result[1]["positive_retention"], 0.0)
+        self.assertEqual(result[1]["negative_rejection"], 1.0)
+
+    def test_report_sections_keep_abstention_analysis_semantic_only(self):
+        evaluation = run_eval()
+
+        lexical_output = StringIO()
+        with redirect_stdout(lexical_output):
+            print_report("Lexical Retrieval", evaluation)
+        self.assertIn("Case Results", lexical_output.getvalue())
+        self.assertIn("Core Case Metrics", lexical_output.getvalue())
+        self.assertIn("Macro Metrics", lexical_output.getvalue())
+        self.assertNotIn("Abstention Analysis", lexical_output.getvalue())
+
+        semantic_output = StringIO()
+        with redirect_stdout(semantic_output):
+            print_report("Semantic Retrieval (Ollama)", evaluation, abstention_analysis=True)
+        self.assertIn("Abstention Analysis", semantic_output.getvalue())
+        self.assertIn("Threshold | Positive Retention | Negative Rejection", semantic_output.getvalue())
+        self.assertNotIn("scores=[", semantic_output.getvalue())
 
     def test_limit_is_applied_without_metric_quality_assumption(self):
         self.assertEqual(len(retrieve("breakout", limit=2)), 2)
