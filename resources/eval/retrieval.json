@@ -1,48 +1,56 @@
 {
   "cases": [
     {
-      "id": "high52",
+      "id": "high52_explicit",
       "query": "52-week high factor residual near-high penalty",
-      "limit": 1,
-      "expected_research_ids": ["RR-002"]
+      "relevant_ids": ["RR-002"]
     },
     {
-      "id": "relative_reversal",
+      "id": "high52_chinese_paraphrase",
+      "query": "股票接近过去一年最高收盘价是否有独立预测能力",
+      "relevant_ids": ["RR-002"]
+    },
+    {
+      "id": "relative_reversal_explicit",
       "query": "relative strength short-term reversal Excess20",
-      "limit": 1,
-      "expected_research_ids": ["RR-001"]
+      "relevant_ids": ["RR-001"]
     },
     {
-      "id": "sequoia_x",
-      "query": "Sequoia-X source exact public scanner reproduction",
-      "limit": 1,
-      "expected_research_ids": ["RR-005"]
+      "id": "relative_reversal_chinese",
+      "query": "相对强弱和短期反转",
+      "relevant_ids": ["RR-001"]
     },
     {
-      "id": "trading_cost_defaults",
+      "id": "sequoia_x_explicit",
+      "query": "Sequoia-X source-exact scanner reproduction",
+      "relevant_ids": ["RR-005"]
+    },
+    {
+      "id": "trading_cost_explicit",
       "query": "asymmetric trading cost buy 10bp sell 15bp",
-      "limit": 1,
-      "expected_research_ids": ["RR-010"]
+      "relevant_ids": ["RR-010"]
+    },
+    {
+      "id": "trading_cost_chinese",
+      "query": "买入 10bp 卖出 15bp 的默认交易成本",
+      "relevant_ids": ["RR-010"]
     },
     {
       "id": "broad_breakout_shape",
       "query": "breakout compression release event",
-      "limit": 3,
-      "expected_research_ids": ["RR-008", "RR-006", "RR-007"]
+      "relevant_ids": ["RR-006", "RR-007", "RR-008"]
     },
     {
       "id": "validated_multi_asset",
       "query": "transaction cost defaults",
       "market": "multi-asset",
       "status": "validated",
-      "limit": 1,
-      "expected_research_ids": ["RR-010"]
+      "relevant_ids": ["RR-010"]
     },
     {
       "id": "unrelated_query",
       "query": "quantum computing asteroid mining",
-      "limit": 5,
-      "expected_research_ids": []
+      "relevant_ids": []
     }
   ]
 }

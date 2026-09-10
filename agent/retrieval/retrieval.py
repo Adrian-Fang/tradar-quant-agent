@@ -19,7 +19,16 @@ FIELD_WEIGHTS = {
 
 
 def _tokens(value: str) -> set[str]:
-    return set(TOKEN_RE.findall(value.casefold()))
+    tokens = set()
+    for match in TOKEN_RE.finditer(value.casefold()):
+        token = match.group()
+        if token[0] >= "\u4e00" and token[0] <= "\u9fff":
+            tokens.update(token[index:index + 2] for index in range(len(token) - 1))
+            if len(token) == 1:
+                tokens.add(token)
+        else:
+            tokens.add(token)
+    return tokens
 
 
 def retrieve(
