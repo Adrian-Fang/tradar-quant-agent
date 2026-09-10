@@ -84,6 +84,8 @@ tradar/
 
 ## 快速开始
 
+注意环境变量 `DATA_PATH` 是 `tradar.duckdb` 存储的日线等数据目录，Tradar 本身只保留研究过程数据和缓存。相关的数据结构（表和关系）见 `utils/duckdb_manager.py`，使用前可以做相应的迁移/适配。
+
 ```bash
 source venv/bin/activate
 python -m pip install -r requirements.txt
@@ -107,6 +109,19 @@ python -m unittest discover -s tests -p 'test_*.py'
 ```
 
 
-## 数据边界
+## 项目边界
 
-`DATA_PATH` 是 `tradar.duckdb` 数据目录，Tradar 本身只保留研究过程数据和缓存。相关的数据结构（表和关系）见 `utils/duckdb_manager.py`，使用前可以做相应的迁移/适配。
+Tradar 聚焦于量化研究流程的 Agent 化，不试图覆盖投资决策、交易执行或底层数据基础设施。
+
+明确边界：
+
+- 不推荐股票：不输出面向用户的个股买卖建议、目标价或仓位建议。
+- 不推荐策略：可以研究、比较和评估策略，但不向用户给出“应当采用某策略进行投资”的投资建议。研究结论以可复现的实验结果、风险指标和适用条件为主。
+- 不负责交易执行：不连接券商下单，不管理真实账户、资金或仓位，也不执行 autonomous trading。
+- 不负责市场数据管线：行情、财务和其他研究数据由外部数据基础设施准备，Tradar 只消费规范化后的数据输入。
+- 不把 LLM 当作量化计算引擎：因子计算、回测、指标和研究结果由 research/ 中的确定性代码完成；Agent 负责理解、检索、编排、调用、评估和解释。
+- 不把探索性代码默认产品化：一次性研究可以存在于 scripts/；只有稳定、可复用、语义明确的能力才沉淀为 research/ 能力或 Agent Tool。
+
+核心职责仅限：
+
+`Research Question → Context / Retrieval → Tool Orchestration → Deterministic Research → Evaluation / Interpretation → Research Memory / Human Review`
