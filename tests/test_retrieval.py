@@ -4,7 +4,7 @@ import unittest
 
 from agent.core.resources import load_json
 from agent.retrieval import load_research_records, retrieve
-from agent.retrieval.eval import run_eval, score_case
+from agent.retrieval.eval import run_eval, run_case
 from agent.retrieval.retrieval import _tokens
 
 
@@ -52,7 +52,7 @@ class RetrievalTests(unittest.TestCase):
 
     def test_score_case_math_for_multi_relevant_query(self):
         case = {"id": "multi", "relevant_ids": ["RR-A", "RR-B"]}
-        row = score_case(case, ["RR-X", "RR-B", "RR-A"], (1, 3))
+        row = run_case(case, ["RR-X", "RR-B", "RR-A"], (1, 3))
         self.assertEqual(row["hit@1"], 0.0)
         self.assertEqual(row["recall@1"], 0.0)
         self.assertEqual(row["precision@1"], 0.0)
@@ -62,7 +62,7 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(row["reciprocal_rank"], 0.5)
 
     def test_no_relevance_case_is_separate_from_relevance_metrics(self):
-        row = score_case(
+        row = run_case(
             {"id": "none", "relevant_ids": []},
             ["RR-X"],
             (1, 3),
@@ -73,7 +73,7 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(row["reciprocal_rank"], 0.0)
         self.assertTrue(row["false_positive"])
 
-        empty = score_case({"id": "none", "relevant_ids": []}, [], (1,))
+        empty = run_case({"id": "none", "relevant_ids": []}, [], (1,))
         self.assertFalse(empty["false_positive"])
 
     def test_metadata_filter(self):

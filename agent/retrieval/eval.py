@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
-
 from ..core.resources import load_json
 from .retrieval import retrieve
 
@@ -11,7 +9,7 @@ from .retrieval import retrieve
 CASES = load_json("eval/retrieval.json")
 
 
-def score_case(
+def run_case(
     case: dict,
     result_ids: list[str],
     k_values: tuple[int, ...],
@@ -58,7 +56,7 @@ def run_eval(k_values: tuple[int, ...] = (1, 3, 5)) -> dict:
         }
         results = retrieve(case["query"], limit=max_k, **filters)
         rows.append(
-            score_case(
+            run_case(
                 case,
                 [result["research_id"] for result in results],
                 k_values,
@@ -66,24 +64,14 @@ def run_eval(k_values: tuple[int, ...] = (1, 3, 5)) -> dict:
         )
 
     relevant_rows = [row for row in rows if row["relevant"]]
+    mrr = (sum(row["reciprocal_rank"] for row in relevant_rows) / len(relevant_rows))
+
     macro_by_k = {}
     for k in k_values:
-        reciprocal_ranks = [
-            next(
-                (
-                    1 / (index + 1)
-                    for index, result_id in enumerate(row["top_results"][:k])
-                    if result_id in row["relevant"]
-                ),
-                0.0,
-            )
-            for row in relevant_rows
-        ]
         macro_by_k[str(k)] = {
             "hit@k": sum(row[f"hit@{k}"] for row in relevant_rows) / len(relevant_rows),
             "recall@k": sum(row[f"recall@{k}"] for row in relevant_rows) / len(relevant_rows),
             "precision@k": sum(row[f"precision@{k}"] for row in relevant_rows) / len(relevant_rows),
-            "mrr": sum(reciprocal_ranks) / len(reciprocal_ranks),
         }
 
     no_relevance_rows = [row for row in rows if not row["relevant"]]
@@ -92,6 +80,7 @@ def run_eval(k_values: tuple[int, ...] = (1, 3, 5)) -> dict:
         "k_values": list(k_values),
         "cases": rows,
         "macro": {
+            "mrr": mrr,
             "by_k": macro_by_k,
             "no_relevance": {
                 "count": len(no_relevance_rows),
@@ -135,9 +124,11 @@ def main() -> None:
         print(
             f"K={k} | Hit@K={metrics['hit@k']:.3f} | "
             f"Recall@K={metrics['recall@k']:.3f} | "
-            f"Precision@K={metrics['precision@k']:.3f} | "
-            f"MRR={metrics['mrr']:.3f}"
+            f"Precision@K={metrics['precision@k']:.3f}"
         )
+    
+    print(f"MRR={evaluation['macro']['mrr']:.3f}")
+
     no_relevance = evaluation["macro"]["no_relevance"]
     print(
         "No-relevance queries | "
