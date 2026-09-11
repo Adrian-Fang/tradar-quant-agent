@@ -1,0 +1,164 @@
+{
+  "cases": [
+    {
+      "id": "positive_relative_reversal",
+      "query": "After a stock has outpaced its benchmark over the recent weeks, does it tend to reverse soon, and is that distinct from long-horizon relative strength?",
+      "research_id": "RR-001",
+      "expected_supported": true,
+      "slice": "positive",
+      "difficulty": "positive"
+    },
+    {
+      "id": "positive_high52_penalty",
+      "query": "Does being close to the best closing level of the prior year predict weaker returns over the next holding window after controls?",
+      "research_id": "RR-002",
+      "expected_supported": true,
+      "slice": "positive",
+      "difficulty": "positive"
+    },
+    {
+      "id": "positive_max_lottery",
+      "query": "Can the largest daily gain in a recent 20-session window contain information about the following month after accounting for reversal and risk exposures?",
+      "research_id": "RR-003",
+      "expected_supported": true,
+      "slice": "positive",
+      "difficulty": "positive"
+    },
+    {
+      "id": "positive_low_amp_mapping",
+      "query": "Can a low-amplitude residual ranking be translated into a cost-aware executable trade rather than merely a statistical signal?",
+      "research_id": "RR-004",
+      "expected_supported": true,
+      "slice": "positive",
+      "difficulty": "positive"
+    },
+    {
+      "id": "positive_sequoia_reproduction",
+      "query": "Were the six public stock scanners reproduced from their source rules and assessed on the local A-share sample?",
+      "research_id": "RR-005",
+      "expected_supported": true,
+      "slice": "positive",
+      "difficulty": "positive"
+    },
+    {
+      "id": "positive_volume_breakout",
+      "query": "Does escaping a recent price range with unusually high trading activity add a durable edge, including when execution is moved to the next open?",
+      "research_id": "RR-006",
+      "expected_supported": true,
+      "slice": "positive",
+      "difficulty": "positive"
+    },
+    {
+      "id": "positive_upper_shadow",
+      "query": "Does the upper-shadow breakout pattern produce durable forward returns after using next-open execution?",
+      "research_id": "RR-007",
+      "expected_supported": true,
+      "slice": "positive",
+      "difficulty": "positive"
+    },
+    {
+      "id": "positive_impulse_compression",
+      "query": "Can a strong impulse followed by high-level compression and a release be treated as a reusable event edge?",
+      "research_id": "RR-008",
+      "expected_supported": true,
+      "slice": "positive",
+      "difficulty": "positive"
+    },
+    {
+      "id": "positive_paper_overlay",
+      "query": "Can the paper-inspired liquidity screens, weighting scheme, and drawdown exposure improve the existing portfolio independently?",
+      "research_id": "RR-009",
+      "expected_supported": true,
+      "slice": "positive",
+      "difficulty": "positive"
+    },
+    {
+      "id": "positive_trading_cost_defaults",
+      "query": "What asymmetric buy and sell costs does the canonical backtest use by default, and are they charged by actual direction?",
+      "research_id": "RR-010",
+      "expected_supported": true,
+      "slice": "positive",
+      "difficulty": "positive"
+    },
+    {
+      "id": "hard_low_52week_rebound",
+      "query": "Do stocks near their lowest level of the past year tend to rebound afterward?",
+      "research_id": "RR-002",
+      "expected_supported": false,
+      "slice": "negative",
+      "difficulty": "hard_negative"
+    },
+    {
+      "id": "hard_large_one_day_loss",
+      "query": "Does an unusually large one-day loss during the recent month predict subsequent returns?",
+      "research_id": "RR-003",
+      "expected_supported": false,
+      "slice": "negative",
+      "difficulty": "hard_negative"
+    },
+    {
+      "id": "hard_low_volume_breakout",
+      "query": "Does a price breakout on unusually weak trading activity have predictive value?",
+      "research_id": "RR-006",
+      "expected_supported": false,
+      "slice": "negative",
+      "difficulty": "hard_negative"
+    },
+    {
+      "id": "hard_slippage_turnover",
+      "query": "How should market-impact slippage scale with portfolio turnover?",
+      "research_id": "RR-009",
+      "expected_supported": false,
+      "slice": "negative",
+      "difficulty": "hard_negative"
+    },
+    {
+      "id": "hard_intraday_vwap",
+      "query": "Do prices reverting toward VWAP intraday provide a persistent edge?",
+      "research_id": "RR-004",
+      "expected_supported": false,
+      "slice": "negative",
+      "difficulty": "hard_negative"
+    },
+    {
+      "id": "near_miss_observed_rr001_top1",
+      "query": "A stock that has run far ahead of its benchmark may give back gains over the next few weeks; what does the research say?",
+      "research_id": "RR-002",
+      "expected_supported": false,
+      "slice": "negative",
+      "difficulty": "near_miss_negative"
+    },
+    {
+      "id": "near_miss_high52_continuation",
+      "query": "Does being close to the best level of the last year predict continued strength?",
+      "research_id": "RR-001",
+      "expected_supported": false,
+      "slice": "negative",
+      "difficulty": "near_miss_negative"
+    },
+    {
+      "id": "near_miss_observed_rr003_top1",
+      "query": "If one day in a stock's recent trading history stands out with an extreme upward move, does the stock tend to lag afterward?",
+      "research_id": "RR-007",
+      "expected_supported": false,
+      "slice": "negative",
+      "difficulty": "near_miss_negative"
+    },
+    {
+      "id": "near_miss_observed_rr006_top1",
+      "query": "When price pushes beyond its recent range while trading activity is noticeably stronger, is the apparent edge still there by the next market open?",
+      "research_id": "RR-007",
+      "expected_supported": false,
+      "slice": "negative",
+      "difficulty": "near_miss_negative"
+    },
+    {
+      "id": "near_miss_low_amp_structure",
+      "query": "Can low-amplitude residual momentum be converted into a cost-aware trade?",
+      "research_id": "RR-008",
+      "expected_supported": false,
+      "slice": "negative",
+      "difficulty": "near_miss_negative"
+    }
+  ]
+}
