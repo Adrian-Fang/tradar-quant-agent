@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest.mock import patch
 
 from agent.memory.eval import (
     CASES,
@@ -67,6 +68,30 @@ class MemoryEvalTests(unittest.TestCase):
         self.assertEqual(meta["metrics"]["supersedes_accuracy"], 1.0)
         self.assertEqual(meta["metrics"]["memory_content_accuracy"], 1.0)
         self.assertEqual(meta["metrics"]["case_pass_rate"], 1.0)
+
+    def test_eval_failures_count_in_case_pass_rate_and_failure_rate(self):
+        case = CASES[0]
+        valid = outcome({
+            "action": "write",
+            "memory": case["fixture_memory"],
+            "supersedes_id": None,
+            "reason": "valid",
+        })
+        contract_failure = {
+            "response_text": "{}",
+            "parsed": {},
+            "parse_error": None,
+            "contract_error": "invalid response",
+        }
+        with patch("agent.memory.eval.CASES", (case, case)), patch(
+            "agent.memory.eval.run_case", side_effect=[valid, contract_failure],
+        ):
+            rows, meta = run_eval(provider="fixture", repeats=1)
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(meta["metrics"]["case_pass_rate"], 0.5)
+        self.assertEqual(meta["metrics"]["eval_failure_rate"], 0.5)
+        self.assertEqual(meta["failure_breakdown"], {"contract_violation": 1})
 
     def test_write_update_and_ignore_decisions(self):
         expected = {

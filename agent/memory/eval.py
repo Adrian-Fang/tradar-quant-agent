@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from collections import Counter
 from collections.abc import Mapping
 from typing import Any
 
@@ -189,10 +190,14 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "cases": len(rows),
         "eval_failures": len(rows) - len(valid),
+        "eval_failure_rate": (len(rows) - len(valid)) / len(rows) if rows else None,
         "action_accuracy": average("action_correct"),
         "supersedes_accuracy": average("supersedes_correct"),
         "memory_content_accuracy": average("memory_content_correct"),
-        "case_pass_rate": average("case_pass"),
+        "case_pass_rate": (
+            sum(row["case_pass"] for row in rows) / len(rows)
+            if rows else None
+        ),
     }
 
 
@@ -237,6 +242,9 @@ def run_eval(
         "repeats": repeats,
         "metrics": _metrics(rows),
         "slice_metrics": {name: _metrics(group) for name, group in groups.items()},
+        "failure_breakdown": dict(Counter(
+            row["failure_type"] for row in rows if row["failure_type"] != "none"
+        )),
     }
 
 
@@ -265,6 +273,23 @@ def main() -> None:
             f"{name} | {value('action_accuracy')} | {value('supersedes_accuracy')} | "
             f"{value('memory_content_accuracy')} | {value('case_pass_rate')}"
         )
+    overall = meta["metrics"]
+    failure_rate = overall["eval_failure_rate"]
+    print(
+        f"\nOverall eval_failure_rate: "
+        f"{'-' if failure_rate is None else f'{failure_rate:.3f}'}"
+    )
+    print(f"Failure breakdown: {meta['failure_breakdown'] or {}}")
+    failures = [row for row in rows if row["failure_type"] != "none"]
+    if failures:
+        print("\nFailure details")
+        print("case | repeat | failure_type | expected | actual | review_reason")
+        for row in failures:
+            print(
+                f"{row['case']} | {row['repeat']} | {row['failure_type']} | "
+                f"{row['expected_action']} | {row['actual_action'] or '-'} | "
+                f"{row['review_reason']}"
+            )
 
 
 if __name__ == "__main__":
