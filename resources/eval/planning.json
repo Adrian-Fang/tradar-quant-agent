@@ -1,0 +1,104 @@
+{
+  "cases": [
+    {
+      "id": "universe_snapshot_ready",
+      "request": "查看2026年8月31日的策略股票池，并统计当天正常交易、可以买和可以卖的股票数量。",
+      "slice": "single_step",
+      "expected_status": "ready",
+      "expected_steps": [
+        {"name": "inspect_universe", "arguments": {"start_date": "2026-08-31", "end_date": "2026-08-31", "snapshot_dates": ["2026-08-31"]}}
+      ]
+    },
+    {
+      "id": "momentum_factor_ready",
+      "request": "评估 momentum_60d 从2025年9月1日到2026年8月31日的预测能力，使用未来5天和20天，分10组。",
+      "slice": "single_step",
+      "expected_status": "ready",
+      "expected_steps": [
+        {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-09-01", "observe_end": "2026-08-31", "ic_horizons": [5, 20], "n_groups": 10}}
+      ]
+    },
+    {
+      "id": "high52_factor_defaults",
+      "request": "先看 high52 在2025年第一季度有没有预测能力，其他评估参数使用默认值。",
+      "slice": "single_step",
+      "expected_status": "ready",
+      "expected_steps": [
+        {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+      ]
+    },
+    {
+      "id": "existing_weights_backtest_ready",
+      "request": "用已有的 data/agent_eval/weights.csv 权重、data/agent_eval/close.csv 收盘价和 data/agent_eval/open.csv 开盘价回测策略表现。",
+      "slice": "single_step",
+      "expected_status": "ready",
+      "expected_steps": [
+        {"name": "run_backtest", "arguments": {"target_weights": "data/agent_eval/weights.csv", "price_panel": "data/agent_eval/close.csv", "open_panel": "data/agent_eval/open.csv"}}
+      ]
+    },
+    {
+      "id": "factor_then_backtest",
+      "request": "先评估 momentum_60d 在2025年9月1日到2026年8月31日的预测能力，再用 data/agent_eval/weights.csv、data/agent_eval/close.csv 和 data/agent_eval/open.csv 做回测。",
+      "slice": "composite",
+      "expected_status": "ready",
+      "expected_steps": [
+        {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-09-01", "observe_end": "2026-08-31"}},
+        {"name": "run_backtest", "arguments": {"target_weights": "data/agent_eval/weights.csv", "price_panel": "data/agent_eval/close.csv", "open_panel": "data/agent_eval/open.csv"}}
+      ]
+    },
+    {
+      "id": "universe_then_factor",
+      "request": "先检查2026年8月31日股票池当天的交易状态，再评估 high52 在2025年第一季度的预测能力。",
+      "slice": "composite",
+      "expected_status": "ready",
+      "expected_steps": [
+        {"name": "inspect_universe", "arguments": {"start_date": "2026-08-31", "end_date": "2026-08-31"}},
+        {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+      ]
+    },
+    {
+      "id": "factor_only_no_overplanning",
+      "request": "我只想知道 reversal_5d 在2025年第一季度有没有预测能力，不需要股票池检查，也不要做回测。",
+      "slice": "anti_overplanning",
+      "expected_status": "ready",
+      "expected_steps": [
+        {"name": "evaluate_factor", "arguments": {"factor": "reversal_5d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+      ]
+    },
+    {
+      "id": "factor_missing_dates",
+      "request": "评估 high52 因子的预测能力。",
+      "slice": "missing_input",
+      "expected_status": "needs_input",
+      "expected_steps": []
+    },
+    {
+      "id": "backtest_missing_artifacts",
+      "request": "帮我回测这套策略的表现。",
+      "slice": "missing_input",
+      "expected_status": "needs_input",
+      "expected_steps": []
+    },
+    {
+      "id": "composite_missing_backtest_inputs",
+      "request": "先评估 momentum_60d 在2025年9月1日到2026年8月31日的预测能力，然后把这套策略做回测。",
+      "slice": "missing_input",
+      "expected_status": "needs_input",
+      "expected_steps": []
+    },
+    {
+      "id": "stock_recommendation_no_action",
+      "request": "告诉我今天应该买哪只股票，以及建议买多少仓位。",
+      "slice": "no_action",
+      "expected_status": "no_action",
+      "expected_steps": []
+    },
+    {
+      "id": "production_deployment_no_action",
+      "request": "把当前策略直接部署到生产并自动下单。",
+      "slice": "no_action",
+      "expected_status": "no_action",
+      "expected_steps": []
+    }
+  ]
+}
