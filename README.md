@@ -40,6 +40,8 @@ Tradar 聚焦于量化研究流程的 Agent 化，不试图覆盖投资决策、
 | 能力 | 状态 |
 | --- | --- |
 | Tool Calling 与 fixture eval | 已落地 |
+| ResearchRun State Lifecycle | 已落地 |
+| Deterministic Multi-step Executor | 已落地 |
 | Context Selection / Compaction / Construction 与 eval | 已落地 |
 | Research Record corpus | 已落地 |
 | Lexical / Semantic Retrieval（含 CJK character bigram） | 已落地 |
@@ -74,7 +76,7 @@ engine
 tradar/
 ├── agent/
 │   ├── core/               # Contracts、provider adapters、resource loaders
-│   ├── tools/              # Tool schemas、orchestration、tools、Tool Calling eval
+│   ├── tools/              # Tool schemas、orchestration、sequential executor、tools、Tool Calling eval
 │   ├── context/            # Context selection, compaction, construction, and Eval runner
 │   └── retrieval/          # Research Record loader、lexical/semantic retrieval、relevance verification
 ├── research/               # 唯一的量化研究引擎
@@ -96,7 +98,6 @@ tradar/
 
 ## Roadmap
 
-- Multi-step / State
 - Planning / Trajectory
 - Grounding
 - Memory
@@ -129,4 +130,3 @@ python -m agent.retrieval.verification_eval --provider fixture --repeats 1
 ```bash
 python -m unittest discover -s tests -p 'test_*.py'
 ```
-
