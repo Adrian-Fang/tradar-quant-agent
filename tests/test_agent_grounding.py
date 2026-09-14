@@ -187,7 +187,7 @@ class GroundingEvalTests(unittest.TestCase):
             1,
         )
         self.assertEqual(invalid["eval_status"], "human_review")
-        self.assertEqual(invalid["failure_type"], "contract_violation")
+        self.assertEqual(invalid["failure_type"], "malformed_response")
         self.assertEqual(missing["eval_status"], "human_review")
 
     def test_malformed_response_is_human_review(self):

@@ -10,12 +10,12 @@ from typing import Any
 
 from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient
 from ..core.resources import load_json, load_prompt
+from .verifier import parse_grounding_response
 
 
 CASES = load_json("eval/grounding.json")
 PROMPT = load_prompt("prompts/grounding.md")
 LABEL_ORDER = ("supported", "unsupported", "contradicted", "unverifiable")
-LABELS = set(LABEL_ORDER)
 
 
 def _prompt(case: dict[str, Any]) -> dict[str, Any]:
@@ -59,42 +59,6 @@ def _response_text(response: Any) -> str:
     return text if isinstance(text, str) else ""
 
 
-def _parse_response(text: str) -> tuple[dict[str, Any] | None, str | None]:
-    try:
-        parsed = json.loads(text.strip())
-    except json.JSONDecodeError as exc:
-        return None, f"response is not valid JSON: {exc}"
-    if not isinstance(parsed, dict):
-        return None, "response JSON must be an object"
-    return parsed, None
-
-
-def _shape_error(parsed: dict[str, Any] | None, evidence_ids: set[str]) -> str | None:
-    if parsed is None:
-        return None
-    if set(parsed) != {"answer", "claims"}:
-        return "response must contain exactly answer and claims"
-    if not isinstance(parsed["answer"], str):
-        return "response.answer must be a string"
-    if not isinstance(parsed["claims"], list):
-        return "response.claims must be an array"
-    for claim in parsed["claims"]:
-        if not isinstance(claim, dict) or set(claim) != {"claim", "evidence_ids", "grounding"}:
-            return "each claim must contain exactly claim, evidence_ids, and grounding"
-        if not isinstance(claim["claim"], str) or not claim["claim"].strip():
-            return "claim.claim must be a non-empty string"
-        if not isinstance(claim["evidence_ids"], list) or not claim["evidence_ids"]:
-            return "claim.evidence_ids must be a non-empty array"
-        if not all(isinstance(evidence_id, str) for evidence_id in claim["evidence_ids"]):
-            return "claim.evidence_ids must contain strings"
-        unknown = sorted(set(claim["evidence_ids"]) - evidence_ids)
-        if unknown:
-            return f"claim cites unknown evidence IDs: {unknown}"
-        if claim["grounding"] not in LABELS:
-            return "claim.grounding is invalid"
-    return None
-
-
 def run_case(case: dict[str, Any], *, client: Any, model: str) -> dict[str, Any]:
     payload = _prompt(case)
     payload["model"] = model
@@ -102,16 +66,20 @@ def run_case(case: dict[str, Any], *, client: Any, model: str) -> dict[str, Any]
     try:
         response = client.create(payload)
         text = _response_text(response)
-        parsed, parse_error = _parse_response(text)
+        parsed, validation_error = parse_grounding_response(text, evidence_ids)
     except Exception as exc:
         text = ""
         parsed = None
         parse_error = f"provider_error: {type(exc).__name__}: {exc}"
+        structure_error = None
+    else:
+        parse_error = validation_error if parsed is None else None
+        structure_error = validation_error if parsed is not None else None
     return {
         "response_text": text,
         "parsed": parsed,
         "parse_error": parse_error,
-        "structure_error": _shape_error(parsed, evidence_ids) if parse_error is None else None,
+        "structure_error": structure_error,
     }
 
 
