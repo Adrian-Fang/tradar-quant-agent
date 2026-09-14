@@ -10,14 +10,12 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient
-from ..core.resources import load_json, load_prompt
+from ..core.resources import load_json
 from ..tools.runner import TOOL_SCHEMAS
+from .planner import PROMPT, parse_plan_response
 
 
 CASES = load_json("eval/planning.json")
-PROMPT = load_prompt("prompts/planning.md")
-ALLOWED_STATUSES = {"ready", "needs_input", "no_action"}
-TOOL_NAMES = {schema["name"] for schema in TOOL_SCHEMAS}
 
 
 def _prompt(case: dict[str, Any]) -> dict[str, Any]:
@@ -55,35 +53,6 @@ def _response_text(response: Any) -> str:
     return text if isinstance(text, str) else ""
 
 
-def _parse_response(text: str) -> tuple[dict[str, Any] | None, str | None]:
-    try:
-        parsed = json.loads(text.strip())
-    except json.JSONDecodeError as exc:
-        return None, f"response is not valid JSON: {exc}"
-    if not isinstance(parsed, dict):
-        return None, "response JSON must be an object"
-    if set(parsed) != {"status", "steps", "reason"}:
-        return None, "response must contain exactly status, steps, and reason"
-    if not isinstance(parsed["status"], str) or parsed["status"] not in ALLOWED_STATUSES:
-        return None, "response.status is invalid"
-    if not isinstance(parsed["steps"], list):
-        return None, "response.steps must be an array"
-    if not isinstance(parsed["reason"], str):
-        return None, "response.reason must be a string"
-    for step in parsed["steps"]:
-        if not isinstance(step, dict) or set(step) != {"name", "arguments"}:
-            return None, "each step must contain exactly name and arguments"
-        if not isinstance(step["name"], str) or step["name"] not in TOOL_NAMES:
-            return None, "step.name is not an available tool"
-        if not isinstance(step["arguments"], dict):
-            return None, "step.arguments must be an object"
-    if parsed["status"] == "ready" and not parsed["steps"]:
-        return None, "ready response must contain at least one step"
-    if parsed["status"] != "ready" and parsed["steps"]:
-        return None, "needs_input and no_action responses must have empty steps"
-    return parsed, None
-
-
 def run_case(
     case: dict[str, Any],
     *,
@@ -100,7 +69,7 @@ def run_case(
         parse_error = f"provider_error: {type(exc).__name__}: {exc}"
     else:
         text = _response_text(response)
-        parsed, parse_error = _parse_response(text)
+        parsed, parse_error = parse_plan_response(text)
     return {
         "response_text": text,
         "parsed": parsed,
@@ -119,6 +88,7 @@ def score_case(
             "slice": case["slice"],
             "repeat": repeat,
             "expected_status": case["expected_status"],
+            "expected_steps": case["expected_steps"],
             "actual_status": None,
             "status_correct": False,
             "required_step_recall": None,
@@ -176,6 +146,7 @@ def score_case(
         "slice": case["slice"],
         "repeat": repeat,
         "expected_status": expected_status,
+        "expected_steps": expected_steps,
         "actual_status": actual_status,
         "status_correct": status_correct,
         "required_step_recall": required_step_recall,
@@ -277,6 +248,18 @@ def main() -> None:
             f"{row['case']} | {row['slice']} | {row['expected_status']} | "
             f"{row['actual_status'] or '-'} | {str(row['case_pass']).lower()}"
         )
+    failures = [row for row in rows if row["eval_status"] != "ok" or not row["case_pass"]]
+    if failures:
+        print("\nFailure details")
+        print("case | repeat | failure_type | expected_status | expected_steps | actual_status | actual_steps | review_reason")
+        for row in failures:
+            expected_steps = json.dumps(row["expected_steps"], ensure_ascii=False, separators=(",", ":"))
+            actual_steps = json.dumps(row["actual_steps"], ensure_ascii=False, separators=(",", ":"))
+            print(
+                f"{row['case']} | {row['repeat']} | {row['failure_type']} | "
+                f"{row['expected_status']} | {expected_steps} | "
+                f"{row['actual_status'] or '-'} | {actual_steps} | {row['review_reason']}"
+            )
     print("\nMetrics")
     print("slice | status | recall | precision | unnecessary | order | args | stop | case_pass")
     for name, metrics in meta["slice_metrics"].items():
