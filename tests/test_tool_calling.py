@@ -13,8 +13,8 @@ from agent.tools.eval import (
     _prepare_eval_artifacts,
     score_case,
 )
-from agent.tools.runner import TOOL_SCHEMAS, _request_payload, run_tool_calling
-from agent.tools.tools import run_backtest as agent_run_backtest
+from agent.tools.calling import TOOL_SCHEMAS, _request_payload, run_tool_calling
+from agent.tools.research import run_backtest as agent_run_backtest
 
 
 class FakeClient:
@@ -68,7 +68,7 @@ class ToolCallingTests(unittest.TestCase):
             normalized_args={"start_date": "2026-01-01", "end_date": "2026-01-31"},
             result={"summary": {"eligible": 1}},
         )
-        with patch("agent.tools.runner.TOOL_FUNCTIONS", {"inspect_universe": lambda **kwargs: executed}):
+        with patch("agent.tools.calling.TOOL_FUNCTIONS", {"inspect_universe": lambda **kwargs: executed}):
             outcome = run_tool_calling("inspect universe", client=fake, run_id="run-1")
 
         self.assertEqual(outcome["selected_tool"], "inspect_universe")

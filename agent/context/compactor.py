@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .selection import PRIORITY
+from .selector import PRIORITY
 
 
 ESSENTIAL_KINDS = {"current_instruction", "task_state", "runtime_truth"}

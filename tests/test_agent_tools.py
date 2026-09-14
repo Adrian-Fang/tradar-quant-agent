@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from agent.core.contracts import ResearchRun, ToolResult
-from agent.tools.tools import evaluate_factor, inspect_universe, run_backtest
+from agent.tools.research import evaluate_factor, inspect_universe, run_backtest
 from research.factor_analyzer import FactorAnalyzer
 from research.metrics import calc_metrics
 from research.vector_backtest import BacktestConfig, run_backtest as canonical_run_backtest
@@ -46,11 +46,11 @@ class AgentToolContractTests(unittest.TestCase):
         sellable = pd.DataFrame([[True, True, False], [True, True, True]], index=dates, columns=columns)
         limits = pd.DataFrame([[10.0, 10.0, float("nan")], [10.0, 10.0, 10.0]], index=dates, columns=columns)
 
-        with patch("agent.tools.tools.panel.eligible_universe_mask", return_value=eligible) as eligible_call, \
-             patch("agent.tools.tools.panel.buyable_mask", return_value=buyable) as buyable_call, \
-             patch("agent.tools.tools.panel.sellable_mask", return_value=sellable) as sellable_call, \
-             patch("agent.tools.tools.panel.price_limit_pct_panel", return_value=limits) as limit_call, \
-             patch("agent.tools.tools.panel.is_trading_mask", return_value=trading) as trading_call:
+        with patch("agent.tools.research.panel.eligible_universe_mask", return_value=eligible) as eligible_call, \
+             patch("agent.tools.research.panel.buyable_mask", return_value=buyable) as buyable_call, \
+             patch("agent.tools.research.panel.sellable_mask", return_value=sellable) as sellable_call, \
+             patch("agent.tools.research.panel.price_limit_pct_panel", return_value=limits) as limit_call, \
+             patch("agent.tools.research.panel.is_trading_mask", return_value=trading) as trading_call:
             result = inspect_universe(
                 "2026-01-02",
                 "2026-01-05",
@@ -86,7 +86,7 @@ class AgentToolContractTests(unittest.TestCase):
 
     def test_missing_data_returns_structured_error(self) -> None:
         with patch(
-            "agent.tools.tools.panel.eligible_universe_mask",
+            "agent.tools.research.panel.eligible_universe_mask",
             side_effect=FileNotFoundError("missing panel"),
         ):
             result = inspect_universe("2026-01-02", "2026-01-05")
@@ -95,7 +95,7 @@ class AgentToolContractTests(unittest.TestCase):
 
     def test_internal_execution_error_returns_structured_error(self) -> None:
         with patch(
-            "agent.tools.tools.panel.eligible_universe_mask",
+            "agent.tools.research.panel.eligible_universe_mask",
             side_effect=RuntimeError("panel exploded"),
         ):
             result = inspect_universe("2026-01-02", "2026-01-05")
@@ -122,12 +122,12 @@ class AgentToolContractTests(unittest.TestCase):
             "description": "test",
             "steps": [{"field": "close"}],
         }
-        with patch("agent.tools.tools.resolve_factor_def", return_value="mock.yaml"), \
-             patch("agent.tools.tools.load_factor_definition", return_value=definition), \
-             patch("agent.tools.tools.required_warmup_days", return_value=7), \
-             patch("agent.tools.tools.load_factor_panels", return_value=({"close": prices}, {})), \
-             patch("agent.tools.tools.evaluate_factor_def_on_panels", return_value=factor), \
-             patch("agent.tools.tools.panel.eligible_universe_mask", return_value=eligible):
+        with patch("agent.tools.research.resolve_factor_def", return_value="mock.yaml"), \
+             patch("agent.tools.research.load_factor_definition", return_value=definition), \
+             patch("agent.tools.research.required_warmup_days", return_value=7), \
+             patch("agent.tools.research.load_factor_panels", return_value=({"close": prices}, {})), \
+             patch("agent.tools.research.evaluate_factor_def_on_panels", return_value=factor), \
+             patch("agent.tools.research.panel.eligible_universe_mask", return_value=eligible):
             result = evaluate_factor(
                 "mock_factor",
                 "2026-01-02",
@@ -166,14 +166,14 @@ class AgentToolContractTests(unittest.TestCase):
         )
         self.assertEqual(bad_args.errors[0]["code"], "invalid_eval_args")
 
-        with patch("agent.tools.tools.resolve_factor_def", side_effect=FileNotFoundError("no factor")):
+        with patch("agent.tools.research.resolve_factor_def", side_effect=FileNotFoundError("no factor")):
             unknown = evaluate_factor("missing_factor", "2026-01-02", "2026-01-08")
         self.assertEqual(unknown.errors[0]["code"], "unknown_factor")
 
-        with patch("agent.tools.tools.load_factor_panels", side_effect=RuntimeError("boom")), \
-             patch("agent.tools.tools.resolve_factor_def", return_value="mock.yaml"), \
-             patch("agent.tools.tools.load_factor_definition", return_value={"steps": [{"field": "close"}]}), \
-             patch("agent.tools.tools.required_warmup_days", return_value=7):
+        with patch("agent.tools.research.load_factor_panels", side_effect=RuntimeError("boom")), \
+             patch("agent.tools.research.resolve_factor_def", return_value="mock.yaml"), \
+             patch("agent.tools.research.load_factor_definition", return_value={"steps": [{"field": "close"}]}), \
+             patch("agent.tools.research.required_warmup_days", return_value=7):
             internal = evaluate_factor("mock_factor", "2026-01-02", "2026-01-08")
         self.assertEqual(internal.errors[0]["code"], "internal_execution_error")
 

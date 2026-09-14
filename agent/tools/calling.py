@@ -10,7 +10,7 @@ from typing import Any
 from ..core.contracts import ResearchRun, ToolResult
 from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient
 from ..core.resources import load_prompt
-from .tools import evaluate_factor, inspect_universe, run_backtest
+from .research import evaluate_factor, inspect_universe, run_backtest
 
 
 TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (

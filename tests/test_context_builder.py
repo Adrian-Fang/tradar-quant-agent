@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from agent.context.construction import construct_context
+from agent.context.builder import construct_context
 from agent.core.resources import load_json
 
 

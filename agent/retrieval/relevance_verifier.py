@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core.resources import load_prompt
-from .semantic import retrieve_semantic
+from .semantic_retriever import retrieve_semantic
 
 
 PROMPT = load_prompt("prompts/relevance_verification.md")

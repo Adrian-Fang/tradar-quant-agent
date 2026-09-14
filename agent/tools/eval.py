@@ -13,7 +13,7 @@ import pandas as pd
 
 from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient
 from ..core.resources import expand_tokens, load_json
-from .runner import run_tool_calling
+from .calling import run_tool_calling
 
 
 EVAL_ARTIFACT_DIR = Path(__file__).resolve().parents[2] / "data" / "agent_eval"

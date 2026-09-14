@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from agent.context.compaction import compact_context
+from agent.context.compactor import compact_context
 from agent.core.resources import load_json
 
 

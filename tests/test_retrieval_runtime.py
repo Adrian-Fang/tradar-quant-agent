@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import unittest
 
-from agent.retrieval.semantic import prepare_semantic_corpus
-from agent.retrieval.verification import retrieve_verified
+from agent.retrieval.semantic_retriever import prepare_semantic_corpus
+from agent.retrieval.relevance_verifier import retrieve_verified
 
 
 RECORDS = (

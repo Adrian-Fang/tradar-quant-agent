@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from agent.context.selection import select_context
+from agent.context.selector import select_context
 from agent.core.resources import load_json
 
 

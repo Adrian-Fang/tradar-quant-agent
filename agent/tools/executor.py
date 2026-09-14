@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core.contracts import ResearchRun, ToolResult
-from .runner import TOOL_FUNCTIONS
+from .calling import TOOL_FUNCTIONS
 
 
 def execute_steps(

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from ..core.providers import OllamaEmbeddingClient
 from ..core.resources import load_json
-from .semantic import prepare_semantic_corpus, retrieve_semantic
-from .retrieval import retrieve
+from .semantic_retriever import prepare_semantic_corpus, retrieve_semantic
+from .lexical_retriever import retrieve
 
 
 CASES = load_json("eval/retrieval.json")

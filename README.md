@@ -120,7 +120,7 @@ cp .env.example .env
 python -m agent.tools.eval --provider fixture --repeats 1
 python -m agent.context.eval --provider fixture --repeats 1
 python -m agent.retrieval.eval
-python -m agent.retrieval.verification_eval --provider fixture --repeats 1
+python -m agent.retrieval.relevance_verifier_eval --provider fixture --repeats 1
 ```
 
 需要模型时，按 provider 配置对应 API key 后运行同一个 capability runner；远程 eval 不属于测试套件。

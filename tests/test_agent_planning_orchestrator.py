@@ -5,7 +5,7 @@ from unittest.mock import patch
 import unittest
 
 from agent.core.contracts import ToolResult
-from agent.planning.runtime import run_planned_request
+from agent.planning.orchestrator import run_planned_request
 
 
 class PlannerClient:

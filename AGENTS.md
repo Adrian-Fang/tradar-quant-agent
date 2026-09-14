@@ -246,10 +246,10 @@ Tradar 正在逐步把原本依赖研究人员和脚本完成的流程显式化�
 python -m agent.tools.eval --provider fixture --repeats 1
 python -m agent.context.eval --provider fixture --repeats 1
 python -m agent.retrieval.eval
-python -m agent.retrieval.verification_eval --provider fixture --repeats 1
+python -m agent.retrieval.relevance_verifier_eval --provider fixture --repeats 1
 ```
 
-`resources/eval/` 中的 JSON 是 dataset，`agent/*/eval.py` 是 runner，`agent/tools/tools.py` 是 production capability。三者保持分离；远程 DeepSeek/OpenAI eval 由调用者自行运行。
+`resources/eval/` 中的 JSON 是 dataset，`agent/*/eval.py` 是 runner，`agent/tools/research.py` 是 production capability。三者保持分离；远程 DeepSeek/OpenAI eval 由调用者自行运行。
 
 ## 9. 修改公共研究能力时
 

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core.resources import load_prompt
-from ..tools.runner import TOOL_SCHEMAS
+from ..tools.calling import TOOL_SCHEMAS
 
 
 PROMPT = load_prompt("prompts/planning.md")

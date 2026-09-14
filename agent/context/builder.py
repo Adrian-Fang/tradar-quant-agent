@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .selection import PRIORITY
+from .selector import PRIORITY
 
 
 def construct_context(

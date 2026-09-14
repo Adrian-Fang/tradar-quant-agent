@@ -11,7 +11,7 @@ from typing import Any
 
 from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient
 from ..core.resources import load_json
-from ..tools.runner import TOOL_SCHEMAS
+from ..tools.calling import TOOL_SCHEMAS
 from .planner import PROMPT, parse_plan_response
 
 

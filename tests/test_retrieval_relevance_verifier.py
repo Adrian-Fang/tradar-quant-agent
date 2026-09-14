@@ -4,7 +4,7 @@ import json
 import unittest
 
 from agent.retrieval.loader import load_research_records
-from agent.retrieval.verification_eval import (
+from agent.retrieval.relevance_verifier_eval import (
     CASES,
     _prompt,
     run_case,

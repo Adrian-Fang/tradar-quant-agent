@@ -11,8 +11,8 @@ from agent.core.resources import load_json
 from agent.core.providers import OllamaEmbeddingClient, OpenAIEmbeddingClient
 from agent.retrieval import load_research_records, retrieve
 from agent.retrieval.eval import print_report, run_eval, run_case, threshold_sweep
-from agent.retrieval.semantic import prepare_semantic_corpus, retrieve_semantic
-from agent.retrieval.retrieval import _tokens
+from agent.retrieval.semantic_retriever import prepare_semantic_corpus, retrieve_semantic
+from agent.retrieval.lexical_retriever import _tokens
 
 
 CASES = load_json("eval/retrieval.json")
@@ -241,7 +241,7 @@ class RetrievalTests(unittest.TestCase):
         def embedder(texts):
             return [[1, 0], [0.8, 0.6], [1, 0], [0, 1]]
 
-        with patch("agent.retrieval.semantic.load_research_records", return_value=FAKE_RECORDS):
+        with patch("agent.retrieval.semantic_retriever.load_research_records", return_value=FAKE_RECORDS):
             results = retrieve_semantic("query", limit=2, embedder=embedder)
         self.assertEqual([result["research_id"] for result in results], ["RR-A", "RR-B"])
         self.assertEqual(results[0]["score"], 1.0)
@@ -253,7 +253,7 @@ class RetrievalTests(unittest.TestCase):
             calls.append(texts)
             return [[1, 0], [1, 0], [1, 0]]
 
-        with patch("agent.retrieval.semantic.load_research_records", return_value=FAKE_RECORDS):
+        with patch("agent.retrieval.semantic_retriever.load_research_records", return_value=FAKE_RECORDS):
             results = retrieve_semantic("query", market="A-share", embedder=embedder)
         self.assertEqual([result["research_id"] for result in results], ["RR-A", "RR-B"])
         self.assertEqual(len(calls[0]), 3)
@@ -368,7 +368,7 @@ class RetrievalTests(unittest.TestCase):
         def unexpected_embedder(texts):
             raise AssertionError("empty query should not be embedded")
 
-        with patch("agent.retrieval.semantic.load_research_records", return_value=FAKE_RECORDS):
+        with patch("agent.retrieval.semantic_retriever.load_research_records", return_value=FAKE_RECORDS):
             self.assertEqual(retrieve_semantic("  ", embedder=unexpected_embedder), [])
 
             with self.assertRaises(ValueError):
