@@ -1,0 +1,136 @@
+{
+  "cases": [
+    {
+      "id": "exact_cost_defaults",
+      "slice": "exactly_supported",
+      "difficulty": "normal",
+      "answer": "The canonical engine defaults are 10bp for buys and 15bp for sells.",
+      "evidence": [{"id": "e1", "text": "The canonical defaults in research/vector_backtest.py are BUY_COST_BP=10 and SELL_COST_BP=15; the engine charges them by actual buy and sell direction."}],
+      "expected_claims": [{"label": "supported", "evidence_ids": ["e1"], "required_tokens": ["10bp", "15bp"]}],
+      "expected_grounded": true
+    },
+    {
+      "id": "exact_relative_reversal_conclusion",
+      "slice": "exactly_supported",
+      "difficulty": "normal",
+      "answer": "The study found short-term relative reversal in Excess20, not stable independent 252-day relative-strength alpha.",
+      "evidence": [{"id": "e1", "text": "Conclusion: inconclusive. The repeatable observation is Excess20 short-term relative reversal, not stable independent 252-day relative-strength alpha."}],
+      "expected_claims": [{"label": "supported", "evidence_ids": ["e1"]}],
+      "expected_grounded": true
+    },
+    {
+      "id": "numeric_round_trip_exact",
+      "slice": "numeric_fidelity",
+      "difficulty": "normal",
+      "answer": "The round-trip smoke output was 24.9750bp, with BUY_COST_BP=10.0000 and SELL_COST_BP=15.0000.",
+      "evidence": [{"id": "e1", "text": "Smoke output: BUY_COST_BP=10.0000, SELL_COST_BP=15.0000, ROUND_TRIP_COST_BP=24.9750, ENGINE_COST_SUM_BP=24.9900."}],
+      "expected_claims": [{"label": "supported", "evidence_ids": ["e1"], "required_tokens": ["24.9750bp", "10.0000", "15.0000"]}],
+      "expected_grounded": true
+    },
+    {
+      "id": "numeric_sell_cost_mismatch",
+      "slice": "numeric_fidelity",
+      "difficulty": "hard",
+      "answer": "The canonical engine charges 25bp on every sell.",
+      "evidence": [{"id": "e1", "text": "The canonical default is BUY=10bp and SELL=15bp; costs are asymmetric and based on actual trade direction."}],
+      "expected_claims": [{"label": "contradicted", "evidence_ids": ["e1"]}],
+      "expected_grounded": false
+    },
+    {
+      "id": "time_window_exact",
+      "slice": "time_scope",
+      "difficulty": "normal",
+      "answer": "The HIGH52 extension covered 127 complete month ends from 2016-01-01 through 2026-07-31.",
+      "evidence": [{"id": "e1", "text": "The extension covered 2016-01-01 to 2026-07-31 and contained 127 complete month ends."}],
+      "expected_claims": [{"label": "supported", "evidence_ids": ["e1"], "required_tokens": ["127", "2016-01-01", "2026-07-31"]}],
+      "expected_grounded": true
+    },
+    {
+      "id": "time_scope_future_extrapolation",
+      "slice": "time_scope",
+      "difficulty": "hard",
+      "answer": "The HIGH52 result proves the factor will remain valid in every future market period.",
+      "evidence": [{"id": "e1", "text": "The study reports historical periods through 2026-07-31 only and does not provide evidence for every future market period."}],
+      "expected_claims": [{"label": "unsupported", "evidence_ids": ["e1"]}],
+      "expected_grounded": false
+    },
+    {
+      "id": "market_scope_global_breakout",
+      "slice": "market_scope",
+      "difficulty": "hard",
+      "answer": "The volume-confirmed platform-breakout result applies to US equities and all global markets.",
+      "evidence": [{"id": "e1", "text": "RR-006 uses local A-share daily data, excludes ST and 688/689 names, and evaluates 2021-01-01 through 2026-07-31."}],
+      "expected_claims": [{"label": "unsupported", "evidence_ids": ["e1"]}],
+      "expected_grounded": false
+    },
+    {
+      "id": "polarity_high52_positive_alpha",
+      "slice": "direction/polarity",
+      "difficulty": "hard",
+      "answer": "Higher HIGH52 is a stable positive alpha signal.",
+      "evidence": [{"id": "e1", "text": "HIGH52 is defined as higher=better, but the residual full MeanIC is negative, G10-G1 is -0.63%, and the conclusion rejects it as a standalone positive momentum factor."}],
+      "expected_claims": [{"label": "contradicted", "evidence_ids": ["e1"]}],
+      "expected_grounded": false
+    },
+    {
+      "id": "unsupported_rs_extrapolation",
+      "slice": "unsupported_extrapolation",
+      "difficulty": "hard",
+      "answer": "The RS_Pct252 experiment validates a stable independent long-term alpha.",
+      "evidence": [{"id": "e1", "text": "Conclusion: inconclusive. Excess20 short-term relative reversal is repeatable, while RS_INCREMENTAL=false and the 5x5 structure should not be upgraded to a strategy."}],
+      "expected_claims": [{"label": "contradicted", "evidence_ids": ["e1"]}],
+      "expected_grounded": false
+    },
+    {
+      "id": "contradicted_scanner_edge",
+      "slice": "contradiction",
+      "difficulty": "hard",
+      "answer": "All six Sequoia-X scanners formed a stable positive edge across DEV_IS, DEV_OOS, and 2026YTD.",
+      "evidence": [{"id": "e1", "text": "No strategy stayed positive across DEV_IS, DEV_OOS, and 2026YTD; the conclusion is rejected because the source-exact scanner set has no cross-phase stable edge."}],
+      "expected_claims": [{"label": "contradicted", "evidence_ids": ["e1"]}],
+      "expected_grounded": false
+    },
+    {
+      "id": "multi_evidence_breakout_conclusion",
+      "slice": "multi_evidence_synthesis",
+      "difficulty": "normal",
+      "answer": "RR-006 found no stable incremental advantage for volume-confirmed breakouts, and the D0-close result did not reliably transfer to next-open execution.",
+      "evidence": [
+        {"id": "e1", "text": "Volume confirmation had no approximately monotonic improvement; extreme volume ratios were worse, and phase results were unstable."},
+        {"id": "e2", "text": "The conclusion rejects the setup: the D0-close edge did not reliably transfer to next-open, and the episode-deduplicated result was unchanged and near zero/negative."}
+      ],
+      "expected_claims": [{"label": "supported", "evidence_ids": ["e1", "e2"]}],
+      "expected_grounded": true
+    },
+    {
+      "id": "multi_evidence_bucket_extrapolation",
+      "slice": "multi_evidence_synthesis",
+      "difficulty": "hard",
+      "answer": "The 1.5-2x volume bucket is a stable winner in every period and at next-open.",
+      "evidence": [
+        {"id": "e1", "text": "The 1.5-2x bucket had FULL D+1-open H20 of +0.28%, while 2-3x was -0.09% and >=3x was -0.90%."},
+        {"id": "e2", "text": "The result was phase-unstable; 2026YTD ALL D+1-open H20 was -1.54%."}
+      ],
+      "expected_claims": [{"label": "contradicted", "evidence_ids": ["e1", "e2"]}],
+      "expected_grounded": false
+    },
+    {
+      "id": "insufficient_old_script_cost_coverage",
+      "slice": "insufficient_evidence",
+      "difficulty": "hard",
+      "answer": "Every historical script in the repository already inherits the 10bp/15bp defaults.",
+      "evidence": [{"id": "e1", "text": "The smoke test validates the canonical engine defaults, but the study did not batch-rerun historical scripts and cannot prove that all old scripts removed custom costs."}],
+      "expected_claims": [{"label": "unverifiable", "evidence_ids": ["e1"]}],
+      "expected_grounded": false
+    },
+    {
+      "id": "contradicted_paper_reproduction",
+      "slice": "contradiction",
+      "difficulty": "hard",
+      "answer": "The paper-inspired overlay was faithfully reproduced and its drawdown result proves stock-selection alpha.",
+      "evidence": [{"id": "e1", "text": "The implementation is explicitly marked PAPER_PROXY because the source is underspecified; the improved drawdown came mainly from 98.7% zero exposure, not demonstrated selection alpha."}],
+      "expected_claims": [{"label": "contradicted", "evidence_ids": ["e1"]}],
+      "expected_grounded": false
+    }
+  ]
+}
