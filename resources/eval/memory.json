@@ -1,0 +1,278 @@
+{
+  "cases": [
+    {
+      "id": "new_language_preference",
+      "slice": "durable_preference",
+      "difficulty": "routine",
+      "message": "From now on, write all project documentation in Chinese.",
+      "existing_memories": [],
+      "expected": {
+        "action": "write",
+        "supersedes_id": null,
+        "required_tokens": [["future", "going forward", "from now on"], ["documentation", "docs"], ["Chinese", "中文"]],
+        "forbidden_tokens": []
+      },
+      "fixture_memory": "Future project documentation should be written in Chinese.",
+      "why": "A clear cross-task language preference is durable and reusable."
+    },
+    {
+      "id": "new_summary_format",
+      "slice": "durable_preference",
+      "difficulty": "routine",
+      "message": "Please keep research summaries concise by default across future tasks.",
+      "existing_memories": [],
+      "expected": {
+        "action": "write",
+        "supersedes_id": null,
+        "required_tokens": [["future", "going forward", "by default"], ["research summaries", "research reports"], ["concise", "brief"]],
+        "forbidden_tokens": []
+      },
+      "fixture_memory": "Future research summaries should be concise by default.",
+      "why": "This is an explicit stable output preference."
+    },
+    {
+      "id": "new_research_report_constraint",
+      "slice": "durable_workflow",
+      "difficulty": "routine",
+      "message": "For future factor reports, always include assumptions and limitations in a short table.",
+      "existing_memories": [],
+      "expected": {
+        "action": "write",
+        "supersedes_id": null,
+        "required_tokens": [["future", "going forward", "from now on"], ["factor reports", "research reports"], ["assumptions"], ["limitations"]],
+        "forbidden_tokens": []
+      },
+      "fixture_memory": "Future factor reports should include assumptions and limitations in a short table.",
+      "why": "A repeated workflow constraint has cross-task reuse value."
+    },
+    {
+      "id": "update_concise_to_detailed",
+      "slice": "explicit_replacement",
+      "difficulty": "routine",
+      "message": "I changed that preference: from now on, give detailed explanations and include assumptions.",
+      "existing_memories": [
+        {"id": "m1", "text": "Research explanations are concise by default."}
+      ],
+      "expected": {
+        "action": "update",
+        "supersedes_id": "m1",
+        "required_tokens": [["detailed", "thorough"], ["explanations"], ["assumptions"]],
+        "forbidden_tokens": []
+      },
+      "fixture_memory": "Research explanations should be detailed and include assumptions.",
+      "why": "The message explicitly replaces the existing preference."
+    },
+    {
+      "id": "update_cost_defaults",
+      "slice": "explicit_correction",
+      "difficulty": "routine",
+      "message": "Correction: use buy 8 bp and sell 12 bp as my default transaction costs going forward.",
+      "existing_memories": [
+        {"id": "m2", "text": "Default transaction costs are buy 10 bp and sell 15 bp."}
+      ],
+      "expected": {
+        "action": "update",
+        "supersedes_id": "m2",
+        "required_tokens": [["buy 8 bp"], ["sell 12 bp"], ["default", "going forward"]],
+        "forbidden_tokens": [["buy 10 bp"], ["sell 15 bp"]]
+      },
+      "fixture_memory": "Default transaction costs are buy 8 bp and sell 12 bp.",
+      "why": "A clear correction supersedes an existing durable fact."
+    },
+    {
+      "id": "update_language_preference",
+      "slice": "explicit_correction",
+      "difficulty": "routine",
+      "message": "Correction: from now on, write project documentation in Chinese.",
+      "existing_memories": [
+        {"id": "m3", "text": "Use English for project documentation by default."}
+      ],
+      "expected": {
+        "action": "update",
+        "supersedes_id": "m3",
+        "required_tokens": [["project documentation", "docs"], ["Chinese", "中文"]],
+        "forbidden_tokens": [["English"]]
+      },
+      "fixture_memory": "Project documentation should be written in Chinese by default.",
+      "why": "The current message explicitly corrects the stored language preference."
+    },
+    {
+      "id": "duplicate_concise_preference",
+      "slice": "duplicate",
+      "difficulty": "routine",
+      "message": "Please keep research explanations concise as usual.",
+      "existing_memories": [
+        {"id": "m1", "text": "Research explanations are concise by default."}
+      ],
+      "expected": {
+        "action": "ignore",
+        "supersedes_id": null,
+        "required_tokens": [],
+        "forbidden_tokens": []
+      },
+      "why": "Equivalent information should not create a duplicate memory."
+    },
+    {
+      "id": "duplicate_language_preference",
+      "slice": "duplicate",
+      "difficulty": "routine",
+      "message": "Continue writing project documentation in Chinese.",
+      "existing_memories": [
+        {"id": "m3", "text": "Project documentation should be written in Chinese."}
+      ],
+      "expected": {
+        "action": "ignore",
+        "supersedes_id": null,
+        "required_tokens": [],
+        "forbidden_tokens": []
+      },
+      "why": "This repeats an existing durable preference without replacing it."
+    },
+    {
+      "id": "task_only_chinese",
+      "slice": "temporary_task",
+      "difficulty": "counterfactual",
+      "message": "For this task only, write the report in Chinese.",
+      "existing_memories": [],
+      "expected": {
+        "action": "ignore",
+        "supersedes_id": null,
+        "required_tokens": [],
+        "forbidden_tokens": []
+      },
+      "why": "The explicit task-local qualifier blocks durable storage."
+    },
+    {
+      "id": "one_report_table",
+      "slice": "temporary_task",
+      "difficulty": "hard_negative",
+      "message": "Only for this one report, format the answer as a table.",
+      "existing_memories": [],
+      "expected": {
+        "action": "ignore",
+        "supersedes_id": null,
+        "required_tokens": [],
+        "forbidden_tokens": []
+      },
+      "why": "A one-report formatting instruction is not durable."
+    },
+    {
+      "id": "runtime_failed_run",
+      "slice": "runtime_state",
+      "difficulty": "routine",
+      "message": "Run run-2026-09-14 failed because the Ollama endpoint timed out.",
+      "existing_memories": [],
+      "expected": {
+        "action": "ignore",
+        "supersedes_id": null,
+        "required_tokens": [],
+        "forbidden_tokens": []
+      },
+      "why": "A run outcome and temporary endpoint state are session information."
+    },
+    {
+      "id": "one_time_backtest_result",
+      "slice": "one_time_result",
+      "difficulty": "routine",
+      "message": "This backtest on the current sample returned Sharpe 1.18.",
+      "existing_memories": [],
+      "expected": {
+        "action": "ignore",
+        "supersedes_id": null,
+        "required_tokens": [],
+        "forbidden_tokens": []
+      },
+      "why": "A single current output is not a durable memory."
+    },
+    {
+      "id": "casual_conversation",
+      "slice": "low_value",
+      "difficulty": "routine",
+      "message": "I am tired today, and the weather is pleasant.",
+      "existing_memories": [],
+      "expected": {
+        "action": "ignore",
+        "supersedes_id": null,
+        "required_tokens": [],
+        "forbidden_tokens": []
+      },
+      "why": "Casual conversation has no clear cross-task value."
+    },
+    {
+      "id": "hedged_future_preference",
+      "slice": "hedged",
+      "difficulty": "hard_negative",
+      "message": "I might prefer longer explanations in the future, perhaps.",
+      "existing_memories": [],
+      "expected": {
+        "action": "ignore",
+        "supersedes_id": null,
+        "required_tokens": [],
+        "forbidden_tokens": []
+      },
+      "why": "A hedged possibility is not a clear durable preference."
+    },
+    {
+      "id": "explicit_no_memory",
+      "slice": "explicit_no_memory",
+      "difficulty": "routine",
+      "message": "Do not remember this: I am traveling this week.",
+      "existing_memories": [],
+      "expected": {
+        "action": "ignore",
+        "supersedes_id": null,
+        "required_tokens": [],
+        "forbidden_tokens": []
+      },
+      "why": "The user explicitly opts out of durable storage."
+    },
+    {
+      "id": "repository_local_hard_negative",
+      "slice": "temporary_task",
+      "difficulty": "hard_negative",
+      "message": "For this repository and this task, use YAML only here; this is not a general preference.",
+      "existing_memories": [],
+      "expected": {
+        "action": "ignore",
+        "supersedes_id": null,
+        "required_tokens": [],
+        "forbidden_tokens": []
+      },
+      "why": "The message explicitly limits the constraint to this repository and task."
+    },
+    {
+      "id": "same_topic_additional_requirement",
+      "slice": "same_topic_additive",
+      "difficulty": "counterfactual",
+      "message": "Going forward, keep research summaries concise and additionally include a source list in every summary.",
+      "existing_memories": [
+        {"id": "m1", "text": "Research explanations are concise by default."}
+      ],
+      "expected": {
+        "action": "write",
+        "supersedes_id": null,
+        "required_tokens": [["future", "going forward", "from now on"], ["research summaries", "research reports"], ["source list", "sources", "references"]],
+        "forbidden_tokens": []
+      },
+      "fixture_memory": "Future research summaries should include a source list.",
+      "why": "The message preserves the existing preference and adds a separate durable requirement."
+    },
+    {
+      "id": "same_topic_replacement_requirement",
+      "slice": "same_topic_replacement",
+      "difficulty": "counterfactual",
+      "message": "Instead of keeping research summaries concise, make them detailed from now on.",
+      "existing_memories": [
+        {"id": "m1", "text": "Research explanations are concise by default."}
+      ],
+      "expected": {
+        "action": "update",
+        "supersedes_id": "m1",
+        "required_tokens": [["future", "from now on", "going forward"], ["research summaries", "research reports"], ["detailed", "thorough"]],
+        "forbidden_tokens": [["concise", "brief"]]
+      },
+      "fixture_memory": "Future research summaries should be detailed.",
+      "why": "Instead of explicitly replaces the old value in the same memory topic."
+    }
+  ]
+}
