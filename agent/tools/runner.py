@@ -184,7 +184,10 @@ def run_tool_calling(
             "selected_tool": selected_tool,
             "model_args": call["arguments"],
         })
-        run.final_status = tool_result.status
+        if tool_result.status == "error":
+            run.fail()
+        else:
+            run.complete(final_status=tool_result.status)
         return {
             "selected_tool": selected_tool,
             "model_args": call["arguments"],
@@ -220,7 +223,7 @@ def run_tool_calling(
             run_id=run.run_id,
         )
     run.add_step(error, result_summary={"selected_tool": None})
-    run.final_status = "error"
+    run.fail()
     return {
         "selected_tool": None,
         "model_args": None,

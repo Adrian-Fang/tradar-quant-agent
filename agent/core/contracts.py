@@ -15,6 +15,7 @@ import pandas as pd
 
 
 ToolStatus = Literal["success", "partial", "error"]
+RunLifecycle = Literal["running", "completed", "failed"]
 
 
 def _new_run_id() -> str:
@@ -200,6 +201,36 @@ class ResearchRun:
     validation: Any = None
     final_status: str = "running"
     human_intervention: list[dict[str, Any]] = field(default_factory=list)
+    status: RunLifecycle = "running"
+
+    def __post_init__(self) -> None:
+        if self.status not in {"running", "completed", "failed"}:
+            raise ValueError(f"unsupported ResearchRun status: {self.status}")
+        allowed_final_status = {
+            "running": {"running"},
+            "completed": {"success", "partial"},
+            "failed": {"error"},
+        }
+        if self.final_status not in {"running", "success", "partial", "error"}:
+            raise ValueError(f"unsupported ResearchRun final_status: {self.final_status}")
+        if self.final_status not in allowed_final_status[self.status]:
+            raise ValueError(
+                f"ResearchRun status {self.status} conflicts with final_status {self.final_status}"
+            )
+
+    def complete(self, *, final_status: Literal["success", "partial"] = "success") -> None:
+        if final_status not in {"success", "partial"}:
+            raise ValueError(f"unsupported completed final_status: {final_status}")
+        if self.status != "running":
+            raise RuntimeError(f"cannot complete ResearchRun from status: {self.status}")
+        self.status = "completed"
+        self.final_status = final_status
+
+    def fail(self) -> None:
+        if self.status != "running":
+            raise RuntimeError(f"cannot fail ResearchRun from status: {self.status}")
+        self.status = "failed"
+        self.final_status = "error"
 
     def add_step(
         self,
@@ -208,6 +239,8 @@ class ResearchRun:
         result_summary: Mapping[str, Any] | None = None,
         result_ref: Any = None,
     ) -> dict[str, Any]:
+        if self.status != "running":
+            raise RuntimeError(f"cannot add step to ResearchRun from status: {self.status}")
         if not isinstance(tool_result, ToolResult):
             raise TypeError("ResearchRun steps require a ToolResult")
         step = {
@@ -234,6 +267,7 @@ class ResearchRun:
             "validation": self.validation,
             "final_status": self.final_status,
             "human_intervention": self.human_intervention,
+            "status": self.status,
         })
 
     def to_json(self) -> str:
@@ -247,13 +281,26 @@ class ResearchRun:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "ResearchRun":
+        final_status = str(payload.get("final_status", "running"))
+        if "status" in payload:
+            status = payload["status"]
+        else:
+            status = {
+                "running": "running",
+                "success": "completed",
+                "partial": "completed",
+                "error": "failed",
+            }.get(final_status)
+            if status is None:
+                raise ValueError(f"unsupported ResearchRun final_status: {final_status}")
         return cls(
             run_id=str(payload["run_id"]),
             user_request=str(payload.get("user_request", "")),
             steps=list(payload.get("steps", [])),
             validation=payload.get("validation"),
-            final_status=str(payload.get("final_status", "running")),
+            final_status=final_status,
             human_intervention=list(payload.get("human_intervention", [])),
+            status=status,
         )
 
     @classmethod
@@ -261,4 +308,4 @@ class ResearchRun:
         return cls.from_dict(json.loads(payload))
 
 
-__all__ = ["ResearchRun", "ToolResult", "ToolStatus"]
+__all__ = ["ResearchRun", "RunLifecycle", "ToolResult", "ToolStatus"]
