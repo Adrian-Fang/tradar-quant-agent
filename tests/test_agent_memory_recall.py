@@ -63,6 +63,13 @@ class MemoryRecallTests(unittest.TestCase):
             self.assertNotIn(oracle, serialized)
         self.assertNotIn("expected_selected_ids", payload["instructions"])
 
+    def test_multi_relevant_documentation_memories_share_artifact_scope(self):
+        case = next(case for case in CASES if case["id"] == "documentation_three_memories")
+        selected = [memory for memory in case["active_memories"] if memory["id"] in case["expected_selected_ids"]]
+        self.assertEqual([memory["id"] for memory in selected], ["m1", "m2", "m3"])
+        self.assertTrue(all(memory["text"].startswith("Project documentation") for memory in selected))
+        self.assertNotIn("transaction costs", " ".join(memory["text"] for memory in selected))
+
     def test_parser_rejects_duplicate_unknown_and_wrong_order_ids(self):
         for selected_ids in (["m1", "m1"], ["missing"], ["m2", "m1"]):
             parsed, error = parse_recall_response(

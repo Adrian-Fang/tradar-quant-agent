@@ -129,8 +129,8 @@
       "user_request": "Write concise Chinese project documentation for the research result and cite the sources.",
       "active_memories": [
         {"id": "m1", "text": "Project documentation should be written in Chinese by default."},
-        {"id": "m2", "text": "Research summaries are concise by default."},
-        {"id": "m3", "text": "Research summaries should include a source list."},
+        {"id": "m2", "text": "Project documentation should be concise by default."},
+        {"id": "m3", "text": "Project documentation should include source links."},
         {"id": "m4", "text": "Default transaction costs are buy 10 bp and sell 15 bp."}
       ],
       "expected_selected_ids": ["m1", "m2", "m3"]
