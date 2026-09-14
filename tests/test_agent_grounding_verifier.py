@@ -4,7 +4,7 @@ import json
 import unittest
 
 from agent.grounding.eval import CASES, FixtureClient, run_case
-from agent.grounding.verifier import verify_answer_grounding
+from agent.grounding.verifier import parse_grounding_response, verify_answer_grounding
 
 
 EVIDENCE = [{"id": "e1", "text": "The measured result is positive."}]
@@ -33,6 +33,17 @@ def claim(label, evidence_ids=("e1",), text="claim"):
 
 
 class GroundingVerifierTests(unittest.TestCase):
+    def test_parser_distinguishes_json_parse_and_contract_errors(self):
+        parsed, error = parse_grounding_response("not json", {"e1"})
+        self.assertIsNone(parsed)
+        self.assertIsNotNone(error)
+
+        parsed, error = parse_grounding_response(
+            json.dumps(output(claim("invalid"))), {"e1"},
+        )
+        self.assertIsNotNone(parsed)
+        self.assertIsNotNone(error)
+
     def test_fully_supported_single_claim_uses_original_answer(self):
         client = FakeClient(output=output(claim("supported")))
         result = verify_answer_grounding("original answer", EVIDENCE, client=client)

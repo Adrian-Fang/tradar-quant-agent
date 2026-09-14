@@ -14,4 +14,4 @@ For each claim, use one grounding label:
 
 Use `unsupported` for an uncovered extension, not for a direct negative finding. Use `unverifiable` only when the record leaves the relevant fact genuinely undecided.
 
-Do not treat topic overlap as entailment. Do not generalize a narrow result, substitute a proxy or related metric, change a number or date, reverse polarity, or import financial common sense. If a claim has no direct evidence, cite no invented ID and mark it unverifiable. Keep evidence_ids limited to IDs supplied in the input.
+Do not treat topic overlap as entailment. Do not generalize a narrow result, substitute a proxy or related metric, change a number or date, reverse polarity, or import financial common sense. For an unverifiable claim, cite one or more supplied evidence items that show the current evidence is insufficient or where the gap remains; never invent an ID. Every material claim must still cite at least one supplied evidence ID. Keep evidence_ids limited to IDs supplied in the input.

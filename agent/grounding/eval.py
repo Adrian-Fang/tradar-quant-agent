@@ -65,16 +65,25 @@ def run_case(case: dict[str, Any], *, client: Any, model: str) -> dict[str, Any]
     evidence_ids = {item["id"] for item in case["evidence"]}
     try:
         response = client.create(payload)
-        text = _response_text(response)
-        parsed, validation_error = parse_grounding_response(text, evidence_ids)
     except Exception as exc:
-        text = ""
-        parsed = None
-        parse_error = f"provider_error: {type(exc).__name__}: {exc}"
-        structure_error = None
-    else:
-        parse_error = validation_error if parsed is None else None
-        structure_error = validation_error if parsed is not None else None
+        return {
+            "response_text": "",
+            "parsed": None,
+            "parse_error": f"provider_error: {type(exc).__name__}: {exc}",
+            "structure_error": None,
+        }
+
+    text = _response_text(response)
+    parsed, validation_error = parse_grounding_response(text, evidence_ids)
+    parse_error = None
+    structure_error = None
+    if validation_error:
+        try:
+            json.loads(text.strip())
+        except json.JSONDecodeError:
+            parse_error = validation_error
+        else:
+            structure_error = validation_error
     return {
         "response_text": text,
         "parsed": parsed,

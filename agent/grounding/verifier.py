@@ -24,33 +24,33 @@ def _response_text(response: Any) -> str:
 def parse_grounding_response(
     text: str,
     evidence_ids: set[str],
-) -> tuple[dict[str, Any] | None, str | None]:
+) -> tuple[Any | None, str | None]:
     try:
         parsed = json.loads(text.strip())
     except json.JSONDecodeError as exc:
         return None, f"response is not valid JSON: {exc}"
     if not isinstance(parsed, dict):
-        return None, "response JSON must be an object"
+        return parsed, "response JSON must be an object"
     if set(parsed) != {"answer", "claims"}:
-        return None, "response must contain exactly answer and claims"
+        return parsed, "response must contain exactly answer and claims"
     if not isinstance(parsed["answer"], str):
-        return None, "response.answer must be a string"
+        return parsed, "response.answer must be a string"
     if not isinstance(parsed["claims"], list):
-        return None, "response.claims must be an array"
+        return parsed, "response.claims must be an array"
     for claim in parsed["claims"]:
         if not isinstance(claim, dict) or set(claim) != {"claim", "evidence_ids", "grounding"}:
-            return None, "each claim must contain exactly claim, evidence_ids, and grounding"
+            return parsed, "each claim must contain exactly claim, evidence_ids, and grounding"
         if not isinstance(claim["claim"], str) or not claim["claim"].strip():
-            return None, "claim.claim must be a non-empty string"
+            return parsed, "claim.claim must be a non-empty string"
         if not isinstance(claim["evidence_ids"], list) or not claim["evidence_ids"]:
-            return None, "claim.evidence_ids must be a non-empty array"
+            return parsed, "claim.evidence_ids must be a non-empty array"
         if not all(isinstance(evidence_id, str) for evidence_id in claim["evidence_ids"]):
-            return None, "claim.evidence_ids must contain strings"
+            return parsed, "claim.evidence_ids must contain strings"
         unknown = sorted(set(claim["evidence_ids"]) - evidence_ids)
         if unknown:
-            return None, f"claim cites unknown evidence IDs: {unknown}"
+            return parsed, f"claim cites unknown evidence IDs: {unknown}"
         if not isinstance(claim["grounding"], str) or claim["grounding"] not in LABELS:
-            return None, "claim.grounding is invalid"
+            return parsed, "claim.grounding is invalid"
     return parsed, None
 
 

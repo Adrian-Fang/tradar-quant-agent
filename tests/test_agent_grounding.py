@@ -187,8 +187,9 @@ class GroundingEvalTests(unittest.TestCase):
             1,
         )
         self.assertEqual(invalid["eval_status"], "human_review")
-        self.assertEqual(invalid["failure_type"], "malformed_response")
+        self.assertEqual(invalid["failure_type"], "contract_violation")
         self.assertEqual(missing["eval_status"], "human_review")
+        self.assertEqual(missing["failure_type"], "contract_violation")
 
     def test_malformed_response_is_human_review(self):
         case = CASES[0]
@@ -200,6 +201,33 @@ class GroundingEvalTests(unittest.TestCase):
         row = score_case(case, run_case(case, client=MalformedClient(), model="fixture"), 1)
         self.assertEqual(row["eval_status"], "human_review")
         self.assertEqual(row["failure_type"], "malformed_response")
+
+    def test_valid_json_contract_errors_are_contract_violations(self):
+        case = CASES[0]
+        responses = [
+            {"answer": case["answer"], "claims": [{"claim": case["answer"]}]},
+            {"answer": case["answer"], "claims": [{
+                "claim": case["answer"], "evidence_ids": ["e1"], "grounding": "invalid",
+            }]},
+            {"answer": case["answer"], "claims": [{
+                "claim": case["answer"], "evidence_ids": ["missing"], "grounding": "supported",
+            }]},
+        ]
+
+        class ContractErrorClient:
+            def __init__(self, response):
+                self.response = response
+
+            def create(self, payload):
+                return {"output_text": json.dumps(self.response)}
+
+        for response in responses:
+            row = score_case(
+                case,
+                run_case(case, client=ContractErrorClient(response), model="fixture"),
+                1,
+            )
+            self.assertEqual(row["failure_type"], "contract_violation")
 
     def test_fixture_client_does_not_need_prompt_oracle(self):
         case = CASES[0]
