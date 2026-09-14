@@ -1,0 +1,160 @@
+{
+  "cases": [
+    {
+      "id": "summary_format_relevant",
+      "slice": "single_relevant",
+      "user_request": "Draft a research summary of the factor result.",
+      "active_memories": [
+        {"id": "m1", "text": "Research summaries are concise by default."}
+      ],
+      "expected_selected_ids": ["m1"]
+    },
+    {
+      "id": "summary_with_sources",
+      "slice": "multi_relevant",
+      "user_request": "Prepare a research summary of this result and include citations.",
+      "active_memories": [
+        {"id": "m1", "text": "Research summaries are concise by default."},
+        {"id": "m2", "text": "Research summaries should include a source list."},
+        {"id": "m3", "text": "Project documentation should be written in Chinese by default."}
+      ],
+      "expected_selected_ids": ["m1", "m2"]
+    },
+    {
+      "id": "documentation_language_relevant",
+      "slice": "single_relevant",
+      "user_request": "Write the project documentation for this release.",
+      "active_memories": [
+        {"id": "m1", "text": "Project documentation should be written in Chinese by default."}
+      ],
+      "expected_selected_ids": ["m1"]
+    },
+    {
+      "id": "factor_report_workflow_relevant",
+      "slice": "single_relevant",
+      "user_request": "Prepare a factor report with the methodology and limitations.",
+      "active_memories": [
+        {"id": "m1", "text": "Factor reports should include assumptions and limitations in a short table."}
+      ],
+      "expected_selected_ids": ["m1"]
+    },
+    {
+      "id": "backtest_cost_defaults_relevant",
+      "slice": "conditional_relevance",
+      "user_request": "Run a backtest using the default buy and sell transaction costs.",
+      "active_memories": [
+        {"id": "m1", "text": "Default transaction costs are buy 10 bp and sell 15 bp."}
+      ],
+      "expected_selected_ids": ["m1"]
+    },
+    {
+      "id": "factor_evaluation_cost_not_needed",
+      "slice": "conditional_relevance",
+      "user_request": "Evaluate the factor's predictive power with information coefficient.",
+      "active_memories": [
+        {"id": "m1", "text": "Default transaction costs are buy 10 bp and sell 15 bp."}
+      ],
+      "expected_selected_ids": []
+    },
+    {
+      "id": "universe_inspection_no_memory",
+      "slice": "no_relevant_memory",
+      "user_request": "Inspect the current tradable universe.",
+      "active_memories": [
+        {"id": "m1", "text": "Default transaction costs are buy 10 bp and sell 15 bp."},
+        {"id": "m2", "text": "Project documentation should be written in Chinese by default."}
+      ],
+      "expected_selected_ids": []
+    },
+    {
+      "id": "same_topic_report_hard_negative",
+      "slice": "same_topic_hard_negative",
+      "user_request": "Does the factor have predictive power over the next month?",
+      "active_memories": [
+        {"id": "m1", "text": "Factor reports should include assumptions and limitations in a short table."}
+      ],
+      "expected_selected_ids": []
+    },
+    {
+      "id": "current_override_memory_still_relevant",
+      "slice": "override_without_precedence",
+      "user_request": "For this report, use detailed explanations instead of the usual concise style.",
+      "active_memories": [
+        {"id": "m1", "text": "Research summaries are concise by default."}
+      ],
+      "expected_selected_ids": ["m1"]
+    },
+    {
+      "id": "additive_atomic_memories",
+      "slice": "multi_relevant",
+      "user_request": "Write a concise research summary and include a source list.",
+      "active_memories": [
+        {"id": "m1", "text": "Research summaries are concise by default."},
+        {"id": "m2", "text": "Research summaries should include a source list."}
+      ],
+      "expected_selected_ids": ["m1", "m2"]
+    },
+    {
+      "id": "runtime_state_not_recalled",
+      "slice": "transient_memory",
+      "user_request": "What default costs should be used for this backtest?",
+      "active_memories": [
+        {"id": "m1", "text": "Run run-2026-09-14 failed because the Ollama endpoint timed out."},
+        {"id": "m2", "text": "Default transaction costs are buy 10 bp and sell 15 bp."}
+      ],
+      "expected_selected_ids": ["m2"]
+    },
+    {
+      "id": "one_time_result_not_recalled",
+      "slice": "transient_memory",
+      "user_request": "Prepare a factor report with assumptions and limitations.",
+      "active_memories": [
+        {"id": "m1", "text": "This backtest on the current sample returned Sharpe 1.18."},
+        {"id": "m2", "text": "Factor reports should include assumptions and limitations in a short table."}
+      ],
+      "expected_selected_ids": ["m2"]
+    },
+    {
+      "id": "language_topic_not_documentation",
+      "slice": "topical_overmatch",
+      "user_request": "Run a Chinese A-share backtest for the momentum factor.",
+      "active_memories": [
+        {"id": "m1", "text": "Project documentation should be written in Chinese by default."}
+      ],
+      "expected_selected_ids": []
+    },
+    {
+      "id": "documentation_three_memories",
+      "slice": "multi_relevant",
+      "user_request": "Write concise Chinese project documentation for the research result and cite the sources.",
+      "active_memories": [
+        {"id": "m1", "text": "Project documentation should be written in Chinese by default."},
+        {"id": "m2", "text": "Research summaries are concise by default."},
+        {"id": "m3", "text": "Research summaries should include a source list."},
+        {"id": "m4", "text": "Default transaction costs are buy 10 bp and sell 15 bp."}
+      ],
+      "expected_selected_ids": ["m1", "m2", "m3"]
+    },
+    {
+      "id": "casual_question_no_memory",
+      "slice": "no_relevant_memory",
+      "user_request": "How is your day going?",
+      "active_memories": [
+        {"id": "m1", "text": "Research summaries are concise by default."},
+        {"id": "m2", "text": "Default transaction costs are buy 10 bp and sell 15 bp."}
+      ],
+      "expected_selected_ids": []
+    },
+    {
+      "id": "runtime_status_no_recall",
+      "slice": "no_relevant_memory",
+      "user_request": "What is the current database connection status?",
+      "active_memories": [
+        {"id": "m1", "text": "Research summaries are concise by default."},
+        {"id": "m2", "text": "Run run-2026-09-14 failed because the Ollama endpoint timed out."},
+        {"id": "m3", "text": "Default transaction costs are buy 10 bp and sell 15 bp."}
+      ],
+      "expected_selected_ids": []
+    }
+  ]
+}
