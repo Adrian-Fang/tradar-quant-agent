@@ -10,25 +10,26 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient
-from ..core.resources import load_json, load_prompt
+from ..core.resources import load_json
+from .gate import (
+    DECISIONS,
+    PROMPT,
+    build_gate_payload,
+    parse_hitl_response,
+    response_text,
+)
 
 
 CASES = load_json("eval/hitl.json")
-PROMPT = load_prompt("prompts/hitl.md")
-DECISIONS = ("proceed", "needs_approval", "blocked")
 
 
 def _prompt(case: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "model": "",
-        "instructions": PROMPT,
-        "input": json.dumps({
-            "user_request": case["user_request"],
-            "proposed_action": case["proposed_action"],
-            "existing_approval": case["existing_approval"],
-            "product_boundaries": case["product_boundaries"],
-        }, ensure_ascii=False),
-    }
+    return build_gate_payload(
+        case["user_request"],
+        case["proposed_action"],
+        case["existing_approval"],
+        case["product_boundaries"],
+    )
 
 
 class FixtureClient:
@@ -54,39 +55,6 @@ class FixtureClient:
         }
 
 
-def _response_text(response: Any) -> str:
-    if isinstance(response, Mapping):
-        text = response.get("output_text", "")
-    else:
-        text = getattr(response, "output_text", "")
-    return text if isinstance(text, str) else ""
-
-
-def parse_hitl_response(text: str) -> tuple[Any | None, str | None]:
-    try:
-        parsed = json.loads(text.strip())
-    except json.JSONDecodeError as exc:
-        return None, f"response is not valid JSON: {exc}"
-    if not isinstance(parsed, dict):
-        return parsed, "response JSON must be an object"
-    if set(parsed) != {"decision", "approval_request", "reason"}:
-        return parsed, "response must contain exactly decision, approval_request, and reason"
-    if parsed["decision"] not in DECISIONS:
-        return parsed, "response.decision is invalid"
-    if parsed["approval_request"] is not None and not isinstance(parsed["approval_request"], str):
-        return parsed, "response.approval_request must be a string or null"
-    if parsed["decision"] == "needs_approval" and (
-        not isinstance(parsed["approval_request"], str)
-        or not parsed["approval_request"].strip()
-    ):
-        return parsed, "needs_approval requires a non-empty approval_request"
-    if parsed["decision"] != "needs_approval" and parsed["approval_request"] is not None:
-        return parsed, "proceed and blocked require a null approval_request"
-    if not isinstance(parsed["reason"], str):
-        return parsed, "response.reason must be a string"
-    return parsed, None
-
-
 def run_case(case: dict[str, Any], *, client: Any, model: str) -> dict[str, Any]:
     payload = _prompt(case)
     payload["model"] = model
@@ -100,7 +68,7 @@ def run_case(case: dict[str, Any], *, client: Any, model: str) -> dict[str, Any]
             "contract_error": None,
         }
 
-    text = _response_text(response)
+    text = response_text(response)
     parsed, validation_error = parse_hitl_response(text)
     parse_error = None
     contract_error = None
