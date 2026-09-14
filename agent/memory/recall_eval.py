@@ -6,26 +6,19 @@ import argparse
 import json
 import os
 from collections import Counter
-from collections.abc import Mapping
 from typing import Any
 
 from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient
-from ..core.resources import load_json, load_prompt
+from ..core.resources import load_json
+from .recall import RECALL_PROMPT, build_recall_payload, parse_recall_response, response_text
 
 
 CASES = load_json("eval/memory_recall.json")
-PROMPT = load_prompt("prompts/memory_recall.md")
+PROMPT = RECALL_PROMPT
 
 
 def _prompt(case: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "model": "",
-        "instructions": PROMPT,
-        "input": json.dumps({
-            "user_request": case["user_request"],
-            "active_memories": case["active_memories"],
-        }, ensure_ascii=False),
-    }
+    return build_recall_payload(case["user_request"], case["active_memories"])
 
 
 class FixtureClient:
@@ -43,41 +36,6 @@ class FixtureClient:
         }
 
 
-def _response_text(response: Any) -> str:
-    if isinstance(response, Mapping):
-        text = response.get("output_text", "")
-    else:
-        text = getattr(response, "output_text", "")
-    return text if isinstance(text, str) else ""
-
-
-def parse_recall_response(
-    text: str,
-    memory_ids: list[str],
-) -> tuple[Any | None, str | None]:
-    try:
-        parsed = json.loads(text.strip())
-    except json.JSONDecodeError as exc:
-        return None, f"response is not valid JSON: {exc}"
-    if not isinstance(parsed, dict):
-        return parsed, "response JSON must be an object"
-    if set(parsed) != {"selected_ids", "reason"}:
-        return parsed, "response must contain exactly selected_ids and reason"
-    selected_ids = parsed["selected_ids"]
-    if not isinstance(selected_ids, list) or not all(isinstance(item, str) for item in selected_ids):
-        return parsed, "response.selected_ids must be a list of strings"
-    if len(selected_ids) != len(set(selected_ids)):
-        return parsed, "response.selected_ids must not contain duplicates"
-    known_ids = set(memory_ids)
-    if any(memory_id not in known_ids for memory_id in selected_ids):
-        return parsed, "response.selected_ids contains an unknown memory ID"
-    if selected_ids != [memory_id for memory_id in memory_ids if memory_id in selected_ids]:
-        return parsed, "response.selected_ids must preserve input memory order"
-    if not isinstance(parsed["reason"], str):
-        return parsed, "response.reason must be a string"
-    return parsed, None
-
-
 def run_case(case: dict[str, Any], *, client: Any, model: str) -> dict[str, Any]:
     payload = _prompt(case)
     payload["model"] = model
@@ -92,7 +50,7 @@ def run_case(case: dict[str, Any], *, client: Any, model: str) -> dict[str, Any]
             "contract_error": None,
         }
 
-    text = _response_text(response)
+    text = response_text(response)
     parsed, validation_error = parse_recall_response(text, memory_ids)
     parse_error = None
     contract_error = None
