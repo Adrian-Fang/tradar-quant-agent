@@ -133,6 +133,8 @@ def score_case(
         "repeat": repeat,
         "expected_action": case["expected"]["action"],
         "actual_action": None,
+        "actual_memory": None,
+        "actual_supersedes_id": None,
         "action_correct": None,
         "supersedes_correct": None,
         "memory_content_correct": None,
@@ -171,6 +173,8 @@ def score_case(
     case_pass = action_correct and supersedes_correct and memory_content_correct
     base.update({
         "actual_action": action,
+        "actual_memory": memory,
+        "actual_supersedes_id": supersedes_id,
         "action_correct": action_correct,
         "supersedes_correct": supersedes_correct,
         "memory_content_correct": memory_content_correct,
@@ -283,12 +287,13 @@ def main() -> None:
     failures = [row for row in rows if row["failure_type"] != "none"]
     if failures:
         print("\nFailure details")
-        print("case | repeat | failure_type | expected | actual | review_reason")
+        print("case | repeat | failure_type | expected | actual | actual_memory | actual_supersedes_id | review_reason")
         for row in failures:
             print(
                 f"{row['case']} | {row['repeat']} | {row['failure_type']} | "
                 f"{row['expected_action']} | {row['actual_action'] or '-'} | "
-                f"{row['review_reason']}"
+                f"{row['actual_memory'] or '-'} | "
+                f"{row['actual_supersedes_id'] or '-'} | {row['review_reason']}"
             )
 
 

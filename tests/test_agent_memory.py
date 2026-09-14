@@ -49,6 +49,9 @@ class MemoryEvalTests(unittest.TestCase):
         for oracle in ("expected", "fixture_memory", "slice", "difficulty", "why"):
             self.assertNotIn(oracle, serialized)
         self.assertNotIn("required_tokens", payload["instructions"])
+        self.assertIn("atomic durable proposition", payload["instructions"])
+        self.assertIn("can coexist", payload["instructions"])
+        self.assertIn("separate requirement", payload["instructions"])
 
     def test_same_topic_cases_use_the_same_memory_slot(self):
         cases = [
@@ -59,6 +62,10 @@ class MemoryEvalTests(unittest.TestCase):
         self.assertEqual(cases[0]["existing_memories"], cases[1]["existing_memories"])
         self.assertEqual(cases[0]["existing_memories"][0]["id"], "m1")
         self.assertIn("Research summaries", cases[0]["existing_memories"][0]["text"])
+        self.assertEqual(cases[0]["expected"]["action"], "write")
+        self.assertIsNone(cases[0]["expected"]["supersedes_id"])
+        self.assertEqual(cases[1]["expected"]["action"], "update")
+        self.assertEqual(cases[1]["expected"]["supersedes_id"], "m1")
 
     def test_fixture_passes_all_cases(self):
         rows, meta = run_eval(provider="fixture", repeats=1)
@@ -92,6 +99,18 @@ class MemoryEvalTests(unittest.TestCase):
         self.assertEqual(meta["metrics"]["case_pass_rate"], 0.5)
         self.assertEqual(meta["metrics"]["eval_failure_rate"], 0.5)
         self.assertEqual(meta["failure_breakdown"], {"contract_violation": 1})
+
+    def test_mismatch_row_keeps_actual_memory_and_supersedes_id(self):
+        case = next(case for case in CASES if case["id"] == "same_topic_additional_requirement")
+        row = score_case(case, outcome({
+            "action": "update",
+            "memory": "Research summaries should be detailed.",
+            "supersedes_id": "m1",
+            "reason": "wrong action",
+        }), 1)
+        self.assertEqual(row["failure_type"], "memory_decision_mismatch")
+        self.assertEqual(row["actual_memory"], "Research summaries should be detailed.")
+        self.assertEqual(row["actual_supersedes_id"], "m1")
 
     def test_write_update_and_ignore_decisions(self):
         expected = {

@@ -20,6 +20,14 @@ Use `ignore` for temporary task or session instructions, runtime state,
 one-time results, casual conversation, duplicates, hedged or speculative
 statements, and any message that says not to remember it.
 
+Treat each memory record as one atomic durable proposition, preference, or
+constraint that can be independently updated or made obsolete. If new durable
+information is related to an existing memory but can coexist with it as a
+separate requirement, choose `write` with `supersedes_id` set to null; do not
+update merely to merge information from the same topic. Use `update` only when
+the new information makes a particular existing memory old, wrong, replaced,
+or no longer true.
+
 Do not infer facts or preferences that are not stated. A current message has
 priority over an old memory, but a change must be explicit before using
 `update`; otherwise use `ignore` for an equivalent repetition.
