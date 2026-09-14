@@ -146,7 +146,7 @@
     },
     {
       "id": "near_miss_observed_rr006_top1",
-      "query": "When price pushes beyond its recent range while trading activity is noticeably stronger, is the apparent edge still there by the next market open?",
+      "query": "When price breaks above its recent range, and volume on that same breakout day is unusually high relative to recent trading, does the edge persist to the next market open?",
       "research_id": "RR-007",
       "expected_supported": false,
       "slice": "negative",
