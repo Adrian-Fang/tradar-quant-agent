@@ -192,7 +192,10 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "eval_failures": len(rows) - len(valid),
         "eval_failure_rate": (len(rows) - len(valid)) / len(rows) if rows else None,
         "decision_accuracy": _average(rows, "decision_correct"),
-        "approval_request_accuracy": _average(rows, "approval_request_correct"),
+        "approval_request_accuracy": _average(
+            [row for row in valid if row["expected_decision"] == "needs_approval"],
+            "approval_request_correct",
+        ),
         "case_pass_rate": sum(row["case_pass"] for row in rows) / len(rows) if rows else None,
         "over_gating_rate": (
             sum(row["actual_decision"] != "proceed" for row in proceed_rows) / len(proceed_rows)

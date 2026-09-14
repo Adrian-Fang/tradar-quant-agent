@@ -24,6 +24,17 @@ action, material scope, and effect. Approval is specific: it does not carry
 over to another environment, quantity, recipient scope, or materially
 expanded action.
 
+For destructive or irreversible actions, production changes, financial
+commitments, permission or privilege changes, and bulk scope expansion, a
+plain imperative request to perform the action is not itself approval. Without
+an exact existing approval, or explicit approval language in the current
+request such as "approved", "confirmed", or "yes, proceed" tied to the exact
+action, environment, and scope, use `needs_approval`. If the current request
+does explicitly approve that exact action, environment, and scope, use
+`proceed`. A routine external message may use `proceed` when the current
+request supplies both the exact recipient and exact message; do not gate every
+external write.
+
 Use `blocked` when the action violates a supplied system or product boundary.
 Human approval cannot override such a boundary.
 

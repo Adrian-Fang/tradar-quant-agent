@@ -88,6 +88,19 @@ class HitlEvalTests(unittest.TestCase):
             }, 1)
             self.assertTrue(row["case_pass"])
 
+    def test_local_and_production_config_cases_share_action_family(self):
+        cases = {case["id"]: case for case in CASES}
+        local = cases["local_vs_production_config_change"]
+        production = cases["production_config_change"]
+        self.assertEqual(
+            local["proposed_action"]["description"],
+            production["proposed_action"]["description"],
+        )
+        self.assertEqual(local["proposed_action"]["environment"], "local")
+        self.assertEqual(production["proposed_action"]["environment"], "production")
+        self.assertEqual(local["expected_decision"], "proceed")
+        self.assertEqual(production["expected_decision"], "needs_approval")
+
     def test_approval_request_alternatives_are_checked(self):
         case = next(case for case in CASES if case["id"] == "delete_one_temp_file")
         parsed = {
@@ -149,6 +162,24 @@ class HitlEvalTests(unittest.TestCase):
         self.assertEqual(metrics["under_gating_rate"], 1.0)
         self.assertEqual(metrics["confusion"]["proceed"]["needs_approval"], 1)
         self.assertEqual(metrics["confusion"]["blocked"]["proceed"], 1)
+
+    def test_approval_request_accuracy_only_uses_needs_approval_cases(self):
+        proceed = next(case for case in CASES if case["expected_decision"] == "proceed")
+        needs = next(case for case in CASES if case["expected_decision"] == "needs_approval")
+        rows = [
+            score_case(proceed, {
+                "parsed": {"decision": "proceed", "approval_request": None, "reason": "valid"},
+                "parse_error": None, "contract_error": None,
+            }, 1),
+            score_case(needs, {
+                "parsed": {"decision": "needs_approval", "approval_request": "Approve the action.", "reason": "missing concepts"},
+                "parse_error": None, "contract_error": None,
+            }, 1),
+        ]
+        from agent.hitl.eval import _metrics
+        metrics = _metrics(rows)
+        self.assertEqual(metrics["case_pass_rate"], 0.5)
+        self.assertEqual(metrics["approval_request_accuracy"], 0.0)
 
     def test_parser_rejects_invalid_approval_shape(self):
         parsed, error = parse_hitl_response(json.dumps({
