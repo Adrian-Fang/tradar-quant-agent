@@ -12,6 +12,7 @@ from agent.memory.eval import (
     run_eval,
     score_case,
 )
+from agent.memory.store import active_memories, apply_memory_decision
 
 
 def outcome(parsed):
@@ -183,6 +184,75 @@ class MemoryEvalTests(unittest.TestCase):
         response = json.loads(client.create(payload)["output_text"])
         self.assertNotIn("expected", payload["input"])
         self.assertEqual(response["action"], "write")
+
+
+class MemoryStoreTests(unittest.TestCase):
+    def write(self, records, memory_id, text):
+        return apply_memory_decision(
+            records,
+            {"action": "write", "memory": text, "supersedes_id": None},
+            new_id=memory_id,
+        )
+
+    def update(self, records, memory_id, text, supersedes_id):
+        return apply_memory_decision(
+            records,
+            {"action": "update", "memory": text, "supersedes_id": supersedes_id},
+            new_id=memory_id,
+        )
+
+    def test_write_to_empty_store(self):
+        records = self.write([], "m1", "Use concise reports.")
+        self.assertEqual(records, ({
+            "id": "m1", "text": "Use concise reports.", "supersedes_id": None,
+        },))
+
+    def test_additive_writes_remain_active(self):
+        records = self.write([], "m1", "Use concise reports.")
+        records = self.write(records, "m2", "Include source lists.")
+        self.assertEqual([record["id"] for record in active_memories(records)], ["m1", "m2"])
+
+    def test_update_appends_and_supersedes_old_record(self):
+        records = self.update(self.write([], "m1", "Use concise reports."), "m2", "Use detailed reports.", "m1")
+        self.assertEqual([record["id"] for record in records], ["m1", "m2"])
+        self.assertEqual([record["id"] for record in active_memories(records)], ["m2"])
+
+    def test_update_chain_has_only_latest_active(self):
+        records = self.write([], "m1", "First preference.")
+        records = self.update(records, "m2", "Second preference.", "m1")
+        records = self.update(records, "m3", "Third preference.", "m2")
+        self.assertEqual([record["id"] for record in active_memories(records)], ["m3"])
+
+    def test_ignore_is_noop(self):
+        records = self.write([], "m1", "Keep this.")
+        result = apply_memory_decision(records, {"action": "ignore", "memory": None, "supersedes_id": None})
+        self.assertEqual(result, records)
+
+    def test_update_requires_existing_active_supersedes_id(self):
+        with self.assertRaises(ValueError):
+            self.update([], "m1", "New preference.", "missing")
+        records = self.update(self.write([], "m1", "Old preference."), "m2", "New preference.", "m1")
+        with self.assertRaises(ValueError):
+            self.update(records, "m3", "Another preference.", "m1")
+
+    def test_duplicate_new_id_is_rejected(self):
+        records = self.write([], "m1", "First.")
+        with self.assertRaises(ValueError):
+            self.write(records, "m1", "Duplicate.")
+
+    def test_input_records_are_not_mutated(self):
+        original = [{"id": "m1", "text": "Old.", "supersedes_id": None}]
+        snapshot = [dict(original[0])]
+        result = self.update(original, "m2", "New.", "m1")
+        self.assertEqual(original, snapshot)
+        self.assertIsNot(result[0], original[0])
+
+    def test_active_memories_keep_append_order(self):
+        records = self.write([], "m1", "First.")
+        records = self.write(records, "m2", "Second.")
+        records = self.update(records, "m3", "Replacement.", "m1")
+        records = self.write(records, "m4", "Fourth.")
+        self.assertEqual([record["id"] for record in active_memories(records)], ["m2", "m3", "m4"])
 
 
 class StaticClient:
