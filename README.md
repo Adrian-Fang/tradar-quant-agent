@@ -42,8 +42,10 @@ Tradar 聚焦于量化研究流程的 Agent 化，不试图覆盖投资决策、
 | Tool Calling 与 fixture eval | 已落地 |
 | Context Selection / Compaction / Construction 与 eval | 已落地 |
 | Research Record corpus | 已落地 |
-| Deterministic lexical retrieval（含 CJK character bigram） | 已落地 |
-| Retrieval Eval baseline | 已落地 |
+| Lexical / Semantic Retrieval（含 CJK character bigram） | 已落地 |
+| Retrieval Eval（baseline / semantic / abstention） | 已落地 |
+| Relevance Verification Eval | 已落地 |
+| Verified Semantic Retrieval runtime | 已落地 |
 | `research/` quantitative engine、factor analysis 与 backtest | 已落地 |
 
 ## 架构快照 / Architecture Snapshot
@@ -74,7 +76,7 @@ tradar/
 │   ├── core/               # Contracts、provider adapters、resource loaders
 │   ├── tools/              # Tool schemas、orchestration、tools、Tool Calling eval
 │   ├── context/            # Context selection, compaction, construction, and Eval runner
-│   └── retrieval/          # Deterministic research knowledge retrieval
+│   └── retrieval/          # Research Record loader、lexical/semantic retrieval、relevance verification
 ├── research/               # 唯一的量化研究引擎
 │   ├── panel.py            # 面板数据与 universe
 │   ├── factor_analyzer.py  # 因子分析
@@ -117,6 +119,7 @@ cp .env.example .env
 python -m agent.tools.eval --provider fixture --repeats 1
 python -m agent.context.eval --provider fixture --repeats 1
 python -m agent.retrieval.eval
+python -m agent.retrieval.verification_eval --provider fixture --repeats 1
 ```
 
 需要模型时，按 provider 配置对应 API key 后运行同一个 capability runner；远程 eval 不属于测试套件。
@@ -126,5 +129,4 @@ python -m agent.retrieval.eval
 ```bash
 python -m unittest discover -s tests -p 'test_*.py'
 ```
-
 

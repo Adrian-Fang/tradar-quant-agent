@@ -28,7 +28,7 @@ Tradar 是一个量化研究、策略验证与生产信号平台，并正在逐�
 - `agent/core/`：共享 Tool contracts、ResearchRun、provider adapters 与资源加载。
 - `agent/tools/`：当前真实存在的 Tool Calling capability、production tools 与其 eval runner。
 - `agent/context/`：Context selection、budget/compaction、construction 与 Context Engineering eval runner。
-- `agent/retrieval/`：Research Record loader 与 deterministic lexical retrieval。
+- `agent/retrieval/`：Research Record loader、lexical/semantic retrieval，以及 relevance verification runtime/eval。
 - `research/`：唯一 canonical quantitative research engine。
 - `scripts/`：具体研究实验与一次性研究入口。
 - `utils/`：数据加载与通用基础设施。
@@ -36,6 +36,19 @@ Tradar 是一个量化研究、策略验证与生产信号平台，并正在逐�
 - `tests/`：关键公共能力的回归测试。
 
 依赖关系应尽量保持：`agent → research → utils` 。Agent 层负责理解任务和调用能力，`research/` 负责确定性的量化计算。不要把特定研究实验写进 `research/`。实验性逻辑通常应该放在 `scripts/`。
+
+知识链路：
+
+```text
+Research Records
+  → Semantic Retrieval Top-K
+  → Relevance Verification
+  → Context Selection
+  → Compaction
+  → Construction
+```
+
+Semantic similarity 只是 retrieval-stage signal，不等于 support。retrieval score 不应作为 verifier 输入；verifier 只判断 `query ↔ record` 是否有直接支持。
 
 
 ## 3. 如何开展新的量化研究
@@ -233,6 +246,7 @@ Tradar 正在逐步把原本依赖研究人员和脚本完成的流程显式化�
 python -m agent.tools.eval --provider fixture --repeats 1
 python -m agent.context.eval --provider fixture --repeats 1
 python -m agent.retrieval.eval
+python -m agent.retrieval.verification_eval --provider fixture --repeats 1
 ```
 
 `resources/eval/` 中的 JSON 是 dataset，`agent/*/eval.py` 是 runner，`agent/tools/tools.py` 是 production capability。三者保持分离；远程 DeepSeek/OpenAI eval 由调用者自行运行。
