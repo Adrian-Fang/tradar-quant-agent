@@ -9,7 +9,7 @@
       "expected": {
         "action": "write",
         "supersedes_id": null,
-        "required_tokens": [["future", "going forward", "from now on"], ["documentation", "docs"], ["Chinese", "中文"]],
+        "required_tokens": [["documentation", "docs"], ["Chinese", "中文"]],
         "forbidden_tokens": []
       },
       "fixture_memory": "Future project documentation should be written in Chinese.",
@@ -24,7 +24,7 @@
       "expected": {
         "action": "write",
         "supersedes_id": null,
-        "required_tokens": [["future", "going forward", "by default"], ["research summaries", "research reports"], ["concise", "brief"]],
+        "required_tokens": [["research summaries", "research reports"], ["concise", "brief", "succinct"]],
         "forbidden_tokens": []
       },
       "fixture_memory": "Future research summaries should be concise by default.",
@@ -39,7 +39,7 @@
       "expected": {
         "action": "write",
         "supersedes_id": null,
-        "required_tokens": [["future", "going forward", "from now on"], ["factor reports", "research reports"], ["assumptions"], ["limitations"]],
+        "required_tokens": [["factor reports", "research reports"], ["assumptions"], ["limitations"], ["table", "tabular"]],
         "forbidden_tokens": []
       },
       "fixture_memory": "Future factor reports should include assumptions and limitations in a short table.",
@@ -73,7 +73,7 @@
       "expected": {
         "action": "update",
         "supersedes_id": "m2",
-        "required_tokens": [["buy 8 bp"], ["sell 12 bp"], ["default", "going forward"]],
+        "required_tokens": [["buy 8 bp"], ["sell 12 bp"], ["default"]],
         "forbidden_tokens": [["buy 10 bp"], ["sell 15 bp"]]
       },
       "fixture_memory": "Default transaction costs are buy 8 bp and sell 12 bp.",
@@ -246,12 +246,12 @@
       "difficulty": "counterfactual",
       "message": "Going forward, keep research summaries concise and additionally include a source list in every summary.",
       "existing_memories": [
-        {"id": "m1", "text": "Research explanations are concise by default."}
+        {"id": "m1", "text": "Research summaries are concise by default."}
       ],
       "expected": {
         "action": "write",
         "supersedes_id": null,
-        "required_tokens": [["future", "going forward", "from now on"], ["research summaries", "research reports"], ["source list", "sources", "references"]],
+        "required_tokens": [["research summaries", "research reports"], ["source list", "sources", "references", "citations"]],
         "forbidden_tokens": []
       },
       "fixture_memory": "Future research summaries should include a source list.",
@@ -263,12 +263,12 @@
       "difficulty": "counterfactual",
       "message": "Instead of keeping research summaries concise, make them detailed from now on.",
       "existing_memories": [
-        {"id": "m1", "text": "Research explanations are concise by default."}
+        {"id": "m1", "text": "Research summaries are concise by default."}
       ],
       "expected": {
         "action": "update",
         "supersedes_id": "m1",
-        "required_tokens": [["future", "from now on", "going forward"], ["research summaries", "research reports"], ["detailed", "thorough"]],
+        "required_tokens": [["research summaries", "research reports"], ["detailed", "thorough"]],
         "forbidden_tokens": [["concise", "brief"]]
       },
       "fixture_memory": "Future research summaries should be detailed.",

@@ -49,6 +49,16 @@ class MemoryEvalTests(unittest.TestCase):
             self.assertNotIn(oracle, serialized)
         self.assertNotIn("required_tokens", payload["instructions"])
 
+    def test_same_topic_cases_use_the_same_memory_slot(self):
+        cases = [
+            case for case in CASES
+            if case["id"] in {"same_topic_additional_requirement", "same_topic_replacement_requirement"}
+        ]
+        self.assertEqual(len(cases), 2)
+        self.assertEqual(cases[0]["existing_memories"], cases[1]["existing_memories"])
+        self.assertEqual(cases[0]["existing_memories"][0]["id"], "m1")
+        self.assertIn("Research summaries", cases[0]["existing_memories"][0]["text"])
+
     def test_fixture_passes_all_cases(self):
         rows, meta = run_eval(provider="fixture", repeats=1)
         self.assertEqual(len(rows), len(CASES))
@@ -76,11 +86,23 @@ class MemoryEvalTests(unittest.TestCase):
         case = next(case for case in CASES if case["id"] == "new_language_preference")
         parsed = {
             "action": "write",
-            "memory": "Going forward, project docs should use Chinese.",
+            "memory": "Project docs should use Chinese.",
             "supersedes_id": None,
             "reason": "paraphrase",
         }
         self.assertTrue(score_case(case, outcome(parsed), 1)["case_pass"])
+
+    def test_required_table_constraint_cannot_be_omitted(self):
+        case = next(case for case in CASES if case["id"] == "new_research_report_constraint")
+        parsed = {
+            "action": "write",
+            "memory": "Factor reports should include assumptions and limitations.",
+            "supersedes_id": None,
+            "reason": "missing table concept",
+        }
+        row = score_case(case, outcome(parsed), 1)
+        self.assertFalse(row["memory_content_correct"])
+        self.assertFalse(row["case_pass"])
 
     def test_invalid_supersedes_id_is_contract_violation(self):
         case = next(case for case in CASES if case["id"] == "update_concise_to_detailed")
