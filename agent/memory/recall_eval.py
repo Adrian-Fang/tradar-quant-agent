@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 from collections import Counter
+from collections.abc import Mapping
 from typing import Any
 
 from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient
