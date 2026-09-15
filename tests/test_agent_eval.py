@@ -6,7 +6,7 @@ import unittest
 from agent.agent_eval import CASES, _metrics, run_eval, score_case
 
 
-class WholeSystemEvalTests(unittest.TestCase):
+class AgentEvalTests(unittest.TestCase):
     def test_dataset_schema_keeps_oracle_out_of_observed_trace(self):
         self.assertEqual(len(CASES), 14)
         for case in CASES:
@@ -17,6 +17,7 @@ class WholeSystemEvalTests(unittest.TestCase):
             self.assertIn("required_steps", case["expected"])
             self.assertIn("planning", case["observed"])
             self.assertIn("orchestration", case["observed"])
+            self.assertNotIn("failure", case["observed"])
             self.assertNotIn("expected", case["observed"])
 
     def test_fixture_all_cases_pass(self):
@@ -24,6 +25,9 @@ class WholeSystemEvalTests(unittest.TestCase):
         self.assertEqual(len(rows), 14)
         self.assertTrue(all(row["case_pass"] for row in rows))
         self.assertEqual(meta["metrics"]["case_pass_rate"], 1.0)
+        self.assertLess(meta["metrics"]["behavior_pass_rate"], 1.0)
+        self.assertEqual(meta["metrics"]["diagnostic_pass_rate"], 1.0)
+        self.assertEqual(meta["metrics"]["trajectory_cases"], 11)
         self.assertEqual(meta["metrics"]["outcome_pass_rate"], 13 / 14)
         self.assertEqual(meta["metrics"]["failure_attribution_accuracy"], 1.0)
         self.assertEqual(meta["metrics"]["eval_failures"], 0)
@@ -62,12 +66,53 @@ class WholeSystemEvalTests(unittest.TestCase):
             row = score_case(case, case["observed"])
             self.assertEqual(row["failure_stage"], stage)
             self.assertTrue(row["case_pass"])
+            if stage in {"context", "planning", "tool", "execution", "state", "grounding", "orchestration", "outcome"}:
+                self.assertFalse(row["behavior_pass"])
 
         for case_id in ("retrieval_abstention", "hitl_blocked_product_boundary"):
             case = next(case for case in CASES if case["id"] == case_id)
             row = score_case(case, case["observed"])
             self.assertIsNone(row["failure_stage"])
             self.assertTrue(row["case_pass"])
+
+    def test_planner_error_is_planning_failure(self):
+        case = copy.deepcopy(CASES[0])
+        case["id"] = "planner_provider_failure"
+        case["expected"].update({
+            "outcome": "error",
+            "required_steps": [],
+            "planning_status": "ready",
+            "run_status": None,
+            "final_status": None,
+            "grounding": None,
+            "hitl_decision": None,
+            "failure_stage": "planning",
+            "failure_type": "provider_error",
+        })
+        case["observed"] = {
+            "context": {"selected_ids": ["request_scope"]},
+            "planning": {"status": "error", "steps": [], "error_type": "provider_error"},
+            "steps": [],
+            "retrieval": None,
+            "research_run": None,
+            "grounding": None,
+            "hitl": None,
+            "orchestration": None,
+            "outcome": {"status": "error"},
+        }
+        row = score_case(case, case["observed"])
+        self.assertEqual((row["failure_stage"], row["failure_type"]), ("planning", "provider_error"))
+        self.assertFalse(row["behavior_pass"])
+        self.assertTrue(row["diagnostic_pass"])
+
+    def test_wrong_arguments_precede_downstream_execution_error(self):
+        case = next(case for case in CASES if case["id"] == "wrong_tool_arguments")
+        observed = copy.deepcopy(case["observed"])
+        observed["steps"][0]["status"] = "error"
+        row = score_case(case, observed)
+        self.assertEqual((row["failure_stage"], row["failure_type"]), ("tool", "wrong_arguments"))
+        self.assertFalse(row["behavior_pass"])
+        self.assertTrue(row["diagnostic_pass"])
 
     def test_malformed_observed_envelope_is_eval_failure(self):
         case = CASES[0]
@@ -90,7 +135,7 @@ class WholeSystemEvalTests(unittest.TestCase):
     def test_failure_field_is_debug_only(self):
         case = next(case for case in CASES if case["id"] == "wrong_final_outcome_after_valid_trace")
         without_debug = copy.deepcopy(case["observed"])
-        without_debug.pop("failure")
+        without_debug.pop("failure", None)
         wrong_debug = copy.deepcopy(without_debug)
         wrong_debug["failure"] = {"stage": "context", "type": "made_up"}
         other_mismatch = copy.deepcopy(without_debug)

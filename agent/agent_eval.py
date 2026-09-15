@@ -1,4 +1,4 @@
-"""Deterministic whole-system evaluation over observed trace envelopes."""
+"""Deterministic agent evaluation over observed trace envelopes."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ FAILURE_STAGES = {
     "outcome",
 }
 OUTCOME_STATUSES = {"success", "error", "abstain", "needs_input", "no_action", "needs_approval", "blocked"}
-PLANNING_STATUSES = {"ready", "needs_input", "no_action"}
+PLANNING_STATUSES = {"ready", "needs_input", "no_action", "error"}
 REQUIRED_OBSERVED_FIELDS = {
     "context",
     "planning",
@@ -55,16 +55,20 @@ def _validate_observed(observed: Any) -> None:
 
     planning = observed["planning"]
     if planning is not None:
+        planning_fields = {"status", "steps", "error_type"} if isinstance(planning, dict) and planning.get("status") == "error" else {"status", "steps"}
         if (
             not isinstance(planning, dict)
-            or set(planning) != {"status", "steps"}
             or planning.get("status") not in PLANNING_STATUSES
             or not isinstance(planning.get("steps"), list)
+            or set(planning) != planning_fields
         ):
             raise ValueError("observed.planning has invalid shape")
-        if planning["status"] == "ready" and not planning["steps"]:
+        if planning["status"] == "error":
+            if planning["steps"] or not isinstance(planning.get("error_type"), str) or not planning["error_type"]:
+                raise ValueError("error planning must contain error_type")
+        elif planning["status"] == "ready" and not planning["steps"]:
             raise ValueError("ready planning must contain steps")
-        if planning["status"] != "ready" and planning["steps"]:
+        elif planning["status"] != "ready" and planning["steps"]:
             raise ValueError("non-ready planning must not contain steps")
         for step in planning["steps"]:
             if (
@@ -175,8 +179,9 @@ def _infer_failure(case: dict[str, Any], observed: dict[str, Any], checks: dict[
     orchestration = observed["orchestration"]
     if orchestration is not None and orchestration["status"] == "error":
         return "orchestration", orchestration["type"]
-    if any(step["status"] == "error" for step in observed["steps"]):
-        return "execution", "tool_result_error"
+    planning = observed["planning"]
+    if planning is not None and planning["status"] == "error":
+        return "planning", planning["error_type"]
     if all(checks.values()):
         return None, None
     if not checks["context"]:
@@ -206,6 +211,8 @@ def _infer_failure(case: dict[str, Any], observed: dict[str, Any], checks: dict[
     )
     if same_name_wrong_args:
         return "tool", "wrong_arguments"
+    if any(step["status"] == "error" for step in observed["steps"]):
+        return "execution", "tool_result_error"
     if not checks["trajectory"]:
         return "orchestration", "trajectory_mismatch"
     if not checks["state"]:
@@ -241,6 +248,8 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
         "failure_stage": None,
         "failure_type": None,
         "outcome_pass": False,
+        "behavior_pass": False,
+        "diagnostic_pass": False,
         "case_pass": False,
         "trajectory": None,
         "grounding_pass": None,
@@ -262,7 +271,12 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
     expected = case["expected"]
     actual_outcome = observed["outcome"]["status"]
     base["actual_outcome"] = actual_outcome
-    trajectory = _trajectory(expected.get("required_steps", []), observed["steps"])
+    expected_steps = expected.get("required_steps", [])
+    trajectory = (
+        _trajectory(expected_steps, observed["steps"])
+        if expected_steps or observed["steps"]
+        else None
+    )
     base["trajectory"] = trajectory
 
     expected_planning_status = expected.get("planning_status", "ready")
@@ -273,7 +287,11 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
         else (
             actual_planning is not None
             and actual_planning["status"] == expected_planning_status
-            and actual_planning["steps"] == expected.get("required_steps", [])
+            and actual_planning["steps"] == expected_steps
+            and (
+                expected.get("planning_error_type") is None
+                or actual_planning.get("error_type") == expected["planning_error_type"]
+            )
         )
     )
     actual_retrieval_status = observed["retrieval"]["status"] if observed["retrieval"] is not None else "not_used"
@@ -316,16 +334,25 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
             and actual_retrieval_ids == expected.get("retrieval_ids", [])
         ),
         "trajectory": (
-            trajectory["required_step_recall"] == 1.0
-            and trajectory["precision"] == 1.0
-            and trajectory["order_correctness"] == 1.0
+            trajectory is None
+            or (
+                trajectory["required_step_recall"] == 1.0
+                and trajectory["precision"] == 1.0
+                and trajectory["order_correctness"] == 1.0
+            )
         ),
+        "execution": not any(step["status"] == "error" for step in observed["steps"]),
         "state": state_matches,
         "grounding": grounding_matches,
         "hitl": hitl_matches,
+        "orchestration": (
+            observed["orchestration"] is None
+            or observed["orchestration"]["status"] == "ok"
+        ),
         "outcome": actual_outcome == expected["outcome"],
     }
     base["outcome_pass"] = checks["outcome"]
+    base["behavior_pass"] = all(checks.values())
     base["grounding_pass"] = float(checks["grounding"]) if expected_grounding is not None else None
     base["hitl_correctness"] = float(checks["hitl"]) if expected_hitl is not None else None
     base["failure_stage"], base["failure_type"] = _infer_failure(case, observed, checks)
@@ -340,20 +367,21 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
             "context": {"context"},
             "retrieval": {"retrieval"},
             "planning": {"planning", "trajectory"},
-            "tool": {"trajectory"},
+            "tool": {"trajectory", "execution"},
             "state": {"state"},
             "grounding": {"grounding"},
             "hitl": {"hitl"},
             "outcome": {"outcome"},
-            "execution": set(),
-            "orchestration": set(),
+            "execution": {"execution"},
+            "orchestration": {"orchestration"},
         }[expected["failure_stage"]]
         behavioral_checks_pass = all(
             check for name, check in checks.items() if name not in excluded_checks
         )
-        base["case_pass"] = bool(behavioral_checks_pass and base["failure_attribution_correct"])
+        base["diagnostic_pass"] = bool(behavioral_checks_pass and base["failure_attribution_correct"])
     else:
-        base["case_pass"] = all(checks.values())
+        base["diagnostic_pass"] = bool(base["behavior_pass"] and base["failure_stage"] is None)
+    base["case_pass"] = base["diagnostic_pass"]
     return base
 
 
@@ -388,16 +416,23 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "order_correctness",
         )
     }
+    grounding_rows = [row for row in rows if row["grounding_pass"] is not None]
+    hitl_rows = [row for row in rows if row["hitl_correctness"] is not None]
     return {
         "cases": len(rows),
+        "behavior_pass_rate": _average(rows, "behavior_pass"),
+        "diagnostic_pass_rate": _average(rows, "diagnostic_pass"),
         "case_pass_rate": _average(rows, "case_pass"),
         "outcome_pass_rate": _average(rows, "outcome_pass"),
+        "trajectory_cases": len(trajectory_rows),
         "trajectory_required_step_recall": trajectory_metrics["required_step_recall"],
         "trajectory_precision": trajectory_metrics["precision"],
         "unnecessary_step_rate": trajectory_metrics["unnecessary_step_rate"],
         "order_correctness": trajectory_metrics["order_correctness"],
         "grounding_pass": _average(rows, "grounding_pass"),
+        "grounding_cases": len(grounding_rows),
         "hitl_correctness": _average(rows, "hitl_correctness"),
+        "hitl_cases": len(hitl_rows),
         "failure_attribution_accuracy": _average(attribution_rows, "failure_attribution_correct"),
         "eval_failures": len(failures),
         "failure_breakdown": dict(sorted(failure_breakdown.items())),
@@ -407,7 +442,7 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def run_eval(provider: str = "fixture", repeats: int = 1) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if provider != "fixture":
-        raise ValueError("whole-system eval currently supports fixture only")
+        raise ValueError("agent eval currently supports fixture only")
     if isinstance(repeats, bool) or not isinstance(repeats, int) or repeats < 1:
         raise ValueError("repeats must be a positive integer")
 
@@ -425,18 +460,21 @@ def run_eval(provider: str = "fixture", repeats: int = 1) -> tuple[list[dict[str
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Whole-system deterministic eval")
+    parser = argparse.ArgumentParser(description="Agent deterministic eval")
     parser.add_argument("--provider", choices=("fixture",), default="fixture")
     parser.add_argument("--repeats", type=int, default=1)
     args = parser.parse_args()
     rows, meta = run_eval(args.provider, args.repeats)
-    print(f"Whole-system Eval | {meta['provider']} | {meta['cases']} cases x {meta['repeats']}")
-    print("case | slice | outcome | pass | failure")
+    print(f"Agent Eval | {meta['provider']} | {meta['cases']} cases x {meta['repeats']}")
+    print("case | slice | outcome | behavior | diagnostic | failure")
     for row in rows:
         failure = row["failure_stage"] or "-"
         if row["failure_type"]:
             failure += f"/{row['failure_type']}"
-        print(f"{row['case']} | {row['slice']} | {row['actual_outcome'] or '-'} | {str(row['case_pass']).lower()} | {failure}")
+        print(
+            f"{row['case']} | {row['slice']} | {row['actual_outcome'] or '-'} | "
+            f"{str(row['behavior_pass']).lower()} | {str(row['diagnostic_pass']).lower()} | {failure}"
+        )
 
     print("\nMetrics")
     for name, value in meta["metrics"].items():

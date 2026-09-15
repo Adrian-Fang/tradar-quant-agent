@@ -32,8 +32,7 @@
         "research_run": {"status": "completed", "final_status": "success"},
         "grounding": {"fully_grounded": true, "labels": ["supported"]},
         "hitl": {"decision": "proceed"},
-        "outcome": {"status": "success"},
-        "failure": null
+        "outcome": {"status": "success"}
       }
     },
     {
@@ -71,8 +70,7 @@
         "research_run": {"status": "completed", "final_status": "success"},
         "grounding": {"fully_grounded": true, "labels": ["supported"]},
         "hitl": {"decision": "proceed"},
-        "outcome": {"status": "success"},
-        "failure": null
+        "outcome": {"status": "success"}
       }
     },
     {
@@ -107,8 +105,7 @@
         "research_run": {"status": "failed", "final_status": "error"},
         "grounding": null,
         "hitl": null,
-        "outcome": {"status": "error"},
-        "failure": {"stage": "context", "type": "missing_required_context"}
+        "outcome": {"status": "error"}
       }
     },
     {
@@ -144,8 +141,7 @@
         "research_run": {"status": "failed", "final_status": "error"},
         "grounding": null,
         "hitl": null,
-        "outcome": {"status": "error"},
-        "failure": {"stage": "planning", "type": "missing_required_step"}
+        "outcome": {"status": "error"}
       }
     },
     {
@@ -182,8 +178,7 @@
         "research_run": {"status": "failed", "final_status": "error"},
         "grounding": null,
         "hitl": null,
-        "outcome": {"status": "error"},
-        "failure": {"stage": "planning", "type": "unnecessary_step"}
+        "outcome": {"status": "error"}
       }
     },
     {
@@ -218,8 +213,7 @@
         "research_run": {"status": "failed", "final_status": "error"},
         "grounding": null,
         "hitl": null,
-        "outcome": {"status": "error"},
-        "failure": {"stage": "tool", "type": "wrong_arguments"}
+        "outcome": {"status": "error"}
       }
     },
     {
@@ -254,8 +248,7 @@
         "research_run": {"status": "failed", "final_status": "error"},
         "grounding": null,
         "hitl": null,
-        "outcome": {"status": "error"},
-        "failure": {"stage": "execution", "type": "tool_result_error"}
+        "outcome": {"status": "error"}
       }
     },
     {
@@ -285,8 +278,7 @@
         "grounding": null,
         "hitl": null,
         "orchestration": null,
-        "outcome": {"status": "abstain"},
-        "failure": null
+        "outcome": {"status": "abstain"}
       }
     },
     {
@@ -321,8 +313,7 @@
         "research_run": {"status": "completed", "final_status": "success"},
         "grounding": {"fully_grounded": false, "labels": ["unsupported", "contradicted"]},
         "hitl": {"decision": "proceed"},
-        "outcome": {"status": "blocked"},
-        "failure": {"stage": "grounding", "type": "ungrounded_claim"}
+        "outcome": {"status": "blocked"}
       }
     },
     {
@@ -357,8 +348,7 @@
         "research_run": {"status": "completed", "final_status": "success"},
         "grounding": {"fully_grounded": true, "labels": ["supported"]},
         "hitl": {"decision": "needs_approval"},
-        "outcome": {"status": "needs_approval"},
-        "failure": null
+        "outcome": {"status": "needs_approval"}
       }
     },
     {
@@ -388,8 +378,7 @@
         "grounding": null,
         "hitl": {"decision": "blocked"},
         "orchestration": null,
-        "outcome": {"status": "blocked"},
-        "failure": null
+        "outcome": {"status": "blocked"}
       }
     },
     {
@@ -424,8 +413,7 @@
         "research_run": {"status": "failed", "final_status": "error"},
         "grounding": {"fully_grounded": true, "labels": ["supported"]},
         "hitl": {"decision": "proceed"},
-        "outcome": {"status": "error"},
-        "failure": {"stage": "state", "type": "lifecycle_mismatch"}
+        "outcome": {"status": "error"}
       }
     },
     {
@@ -455,8 +443,7 @@
         "grounding": null,
         "hitl": null,
         "orchestration": {"status": "error", "type": "invalid_execution_envelope"},
-        "outcome": {"status": "error"},
-        "failure": {"stage": "orchestration", "type": "invalid_execution_envelope"}
+        "outcome": {"status": "error"}
       }
     },
     {
@@ -491,8 +478,7 @@
         "research_run": {"status": "completed", "final_status": "success"},
         "grounding": {"fully_grounded": true, "labels": ["supported"]},
         "hitl": {"decision": "proceed"},
-        "outcome": {"status": "error"},
-        "failure": {"stage": "outcome", "type": "wrong_final_outcome"}
+        "outcome": {"status": "error"}
       }
     }
   ]
