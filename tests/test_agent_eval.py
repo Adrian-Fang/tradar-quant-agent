@@ -80,7 +80,6 @@ class AgentEvalTests(unittest.TestCase):
         case["id"] = "planner_provider_failure"
         case["expected"].update({
             "outcome": "error",
-            "required_steps": [],
             "planning_status": "ready",
             "run_status": None,
             "final_status": None,
@@ -102,6 +101,8 @@ class AgentEvalTests(unittest.TestCase):
         }
         row = score_case(case, case["observed"])
         self.assertEqual((row["failure_stage"], row["failure_type"]), ("planning", "provider_error"))
+        self.assertIsNone(row["trajectory"])
+        self.assertEqual(_metrics([row])["trajectory_cases"], 0)
         self.assertFalse(row["behavior_pass"])
         self.assertTrue(row["diagnostic_pass"])
 
@@ -152,6 +153,7 @@ class AgentEvalTests(unittest.TestCase):
         row = score_case(case, observed)
         self.assertEqual(row["failure_stage"], "orchestration")
         self.assertEqual(row["failure_type"], "trajectory_mismatch")
+        self.assertIsNone(row["trajectory"])
 
     def test_planning_stops_allow_unreached_stages(self):
         for status in ("needs_input", "no_action"):

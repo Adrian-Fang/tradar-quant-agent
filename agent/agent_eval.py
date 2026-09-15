@@ -213,6 +213,8 @@ def _infer_failure(case: dict[str, Any], observed: dict[str, Any], checks: dict[
         return "tool", "wrong_arguments"
     if any(step["status"] == "error" for step in observed["steps"]):
         return "execution", "tool_result_error"
+    if not checks["execution"]:
+        return "orchestration", "trajectory_mismatch"
     if not checks["trajectory"]:
         return "orchestration", "trajectory_mismatch"
     if not checks["state"]:
@@ -272,9 +274,14 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
     actual_outcome = observed["outcome"]["status"]
     base["actual_outcome"] = actual_outcome
     expected_steps = expected.get("required_steps", [])
+    execution_reached = (
+        observed["planning"] is not None
+        and observed["planning"]["status"] == "ready"
+        and bool(observed["steps"])
+    )
     trajectory = (
         _trajectory(expected_steps, observed["steps"])
-        if expected_steps or observed["steps"]
+        if execution_reached
         else None
     )
     base["trajectory"] = trajectory
@@ -341,7 +348,10 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
                 and trajectory["order_correctness"] == 1.0
             )
         ),
-        "execution": not any(step["status"] == "error" for step in observed["steps"]),
+        "execution": (
+            (not expected_steps or execution_reached)
+            and not any(step["status"] == "error" for step in observed["steps"])
+        ),
         "state": state_matches,
         "grounding": grounding_matches,
         "hitl": hitl_matches,
@@ -366,7 +376,7 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
         excluded_checks = {
             "context": {"context"},
             "retrieval": {"retrieval"},
-            "planning": {"planning", "trajectory"},
+            "planning": {"planning", "trajectory", "execution"},
             "tool": {"trajectory", "execution"},
             "state": {"state"},
             "grounding": {"grounding"},
