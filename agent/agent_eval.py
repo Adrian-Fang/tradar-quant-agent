@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from collections.abc import Mapping
+import json
+import os
 from typing import Any
 
+from .core.providers import DeepSeekChatClient, OpenAIResponsesClient
 from .core.resources import load_json
 
 
 CASES = load_json("eval/agent.json")
+RUNTIME_CASES = load_json("eval/agent_runtime.json")
 FAILURE_STAGES = {
     "context",
     "retrieval",
@@ -175,7 +180,13 @@ def _trajectory(expected_steps: list[dict[str, Any]], actual_steps: list[dict[st
     }
 
 
-def _infer_failure(case: dict[str, Any], observed: dict[str, Any], checks: dict[str, bool], hitl_stop: bool) -> tuple[str | None, str | None]:
+def _infer_failure(
+    case: dict[str, Any],
+    observed: dict[str, Any],
+    checks: dict[str, bool],
+    hitl_stop: bool,
+    expected_steps: list[dict[str, Any]],
+) -> tuple[str | None, str | None]:
     orchestration = observed["orchestration"]
     if orchestration is not None and orchestration["status"] == "error":
         return "orchestration", orchestration["type"]
@@ -204,7 +215,6 @@ def _infer_failure(case: dict[str, Any], observed: dict[str, Any], checks: dict[
         return "retrieval", "retrieval_mismatch"
     if hitl_stop and not checks["hitl"]:
         return "hitl", "decision_mismatch"
-    expected_steps = case["expected"].get("required_steps", [])
     same_name_wrong_args = any(
         actual["name"] == expected["name"]
         and actual["arguments"] != expected["arguments"]
@@ -235,6 +245,73 @@ def _infer_failure(case: dict[str, Any], observed: dict[str, Any], checks: dict[
 
 def run_case(case: dict[str, Any]) -> dict[str, Any]:
     return case["observed"]
+
+
+class RuntimeFixtureClient:
+    """Deterministic runtime harness; expected values never enter the prompt."""
+
+    def __init__(self, case: dict[str, Any], role: str) -> None:
+        self.case = case
+        self.role = role
+
+    def create(self, payload: Mapping[str, Any]) -> dict[str, str]:
+        expected = self.case["expected"]
+        if self.role == "planner":
+            output = {
+                "status": expected.get("planning_status", "ready"),
+                "steps": expected.get("required_steps", []),
+                "reason": "deterministic runtime fixture plan",
+            }
+        elif self.role == "hitl":
+            decision = expected.get("hitl_decision", "proceed")
+            output = {
+                "decision": decision,
+                "approval_request": "Approve the proposed action." if decision == "needs_approval" else None,
+                "reason": "deterministic runtime fixture gate",
+            }
+        else:
+            evidence = self.case["runtime"]["evidence"]
+            output = {
+                "answer": self.case["runtime"]["answer"],
+                "claims": [{
+                    "claim": self.case["runtime"]["answer"],
+                    "evidence_ids": [evidence[0]["id"]],
+                    "grounding": "supported" if expected["grounding"] else "unsupported",
+                }],
+            }
+        return {"output_text": json.dumps(output, ensure_ascii=False)}
+
+
+def run_runtime_case(
+    case: dict[str, Any],
+    *,
+    provider: str,
+    client: Any = None,
+    model: str = "",
+) -> dict[str, Any]:
+    from .agent import run_agent
+
+    if provider == "fixture":
+        planner_client = RuntimeFixtureClient(case, "planner")
+        hitl_client = RuntimeFixtureClient(case, "hitl")
+        grounding_client = RuntimeFixtureClient(case, "grounding")
+    else:
+        planner_client = hitl_client = grounding_client = client
+
+    runtime = case["runtime"]
+    kwargs = {
+        "planner_client": planner_client,
+        "hitl_client": hitl_client,
+        "proposed_action": runtime["proposed_action"],
+        "existing_approval": runtime["existing_approval"],
+        "product_boundaries": runtime["product_boundaries"],
+        "model": model,
+    }
+    if "answer" in runtime:
+        kwargs["answer"] = runtime["answer"]
+        kwargs["evidence"] = runtime["evidence"]
+        kwargs["grounding_client"] = grounding_client
+    return run_agent(case["request"], **kwargs)
 
 
 def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) -> dict[str, Any]:
@@ -276,13 +353,14 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
     actual_outcome = observed["outcome"]["status"]
     base["actual_outcome"] = actual_outcome
     expected_steps = expected.get("required_steps", [])
+    execution_steps = expected.get("execution_steps", expected_steps)
     execution_reached = (
         observed["planning"] is not None
         and observed["planning"]["status"] == "ready"
         and bool(observed["steps"])
     )
     trajectory = (
-        _trajectory(expected_steps, observed["steps"])
+        _trajectory(execution_steps, observed["steps"])
         if execution_reached
         else None
     )
@@ -382,7 +460,9 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
         None if hitl_stop or expected_grounding is None else float(checks["grounding"])
     )
     base["hitl_correctness"] = float(checks["hitl"]) if expected_hitl is not None else None
-    base["failure_stage"], base["failure_type"] = _infer_failure(case, observed, checks, hitl_stop)
+    base["failure_stage"], base["failure_type"] = _infer_failure(
+        case, observed, checks, hitl_stop, execution_steps,
+    )
 
     expected_failure = expected.get("failure_stage") is not None
     if expected_failure:
@@ -468,19 +548,51 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def run_eval(provider: str = "fixture", repeats: int = 1) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    if provider != "fixture":
-        raise ValueError("agent eval currently supports fixture only")
+    if provider not in {"fixture", "deepseek", "openai"}:
+        raise ValueError(f"unsupported provider: {provider}")
     if isinstance(repeats, bool) or not isinstance(repeats, int) or repeats < 1:
         raise ValueError("repeats must be a positive integer")
+    if provider == "deepseek" and not os.getenv("DEEPSEEK_API_KEY"):
+        return [], {
+            "status": "skipped",
+            "provider": provider,
+            "cases": len(RUNTIME_CASES),
+            "repeats": repeats,
+            "reason": "DEEPSEEK_API_KEY is not set",
+        }
+    if provider == "openai" and not os.getenv("OPENAI_API_KEY"):
+        return [], {
+            "status": "skipped",
+            "provider": provider,
+            "cases": len(RUNTIME_CASES),
+            "repeats": repeats,
+            "reason": "OPENAI_API_KEY is not set",
+        }
 
+    cases = CASES if provider == "fixture" else RUNTIME_CASES
+    model = (
+        os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+        if provider == "deepseek" else os.getenv("OPENAI_MODEL", "gpt-5")
+    )
+    client = (
+        DeepSeekChatClient() if provider == "deepseek"
+        else OpenAIResponsesClient() if provider == "openai"
+        else None
+    )
     rows = []
-    for case in CASES:
+    for case in cases:
         for repeat in range(1, repeats + 1):
-            rows.append(score_case(case, run_case(case), repeat))
+            if provider == "fixture":
+                observed = run_case(case)
+            else:
+                observed = run_runtime_case(
+                    case, provider=provider, client=client, model=model,
+                )["observed"]
+            rows.append(score_case(case, observed, repeat))
     return rows, {
         "status": "complete",
         "provider": provider,
-        "cases": len(CASES),
+        "cases": len(cases),
         "repeats": repeats,
         "metrics": _metrics(rows),
     }
@@ -488,10 +600,13 @@ def run_eval(provider: str = "fixture", repeats: int = 1) -> tuple[list[dict[str
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Agent deterministic eval")
-    parser.add_argument("--provider", choices=("fixture",), default="fixture")
+    parser.add_argument("--provider", choices=("fixture", "deepseek", "openai"), default="fixture")
     parser.add_argument("--repeats", type=int, default=1)
     args = parser.parse_args()
     rows, meta = run_eval(args.provider, args.repeats)
+    if meta["status"] == "skipped":
+        print(f"Agent Eval skipped: {meta['reason']}")
+        return
     print(f"Agent Eval | {meta['provider']} | {meta['cases']} cases x {meta['repeats']}")
     print("case | slice | outcome | behavior | diagnostic | failure")
     for row in rows:
@@ -517,4 +632,4 @@ if __name__ == "__main__":
     main()
 
 
-__all__ = ["CASES", "run_case", "run_eval", "score_case"]
+__all__ = ["CASES", "RUNTIME_CASES", "run_case", "run_eval", "run_runtime_case", "score_case"]

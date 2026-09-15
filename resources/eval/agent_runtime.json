@@ -1,0 +1,221 @@
+{
+  "cases": [
+    {
+      "id": "runtime_read_only_success",
+      "slice": "runtime_success",
+      "request": "Inspect the 2025-03-31 universe and report the available trading counts.",
+      "runtime": {
+        "proposed_action": {"description": "Inspect the local research universe.", "environment": "local", "reversible": true},
+        "existing_approval": {"approved": false, "scope": null},
+        "product_boundaries": []
+      },
+      "expected": {
+        "outcome": "success",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [
+          {"name": "inspect_universe", "arguments": {"start_date": "2025-03-31", "end_date": "2025-03-31"}}
+        ],
+        "execution_steps": [
+          {"name": "inspect_universe", "arguments": {"start_date": "2025-03-31", "end_date": "2025-03-31", "exclude_st": true, "min_turnover_rate": 1.0, "min_listed_days": 20, "snapshot_dates": []}}
+        ],
+        "run_status": "completed",
+        "final_status": "success",
+        "grounding": null,
+        "hitl_decision": "proceed",
+        "failure_stage": null,
+        "failure_type": null
+      }
+    },
+    {
+      "id": "runtime_multi_step_success",
+      "slice": "runtime_success",
+      "request": "Inspect the 2025-03-31 universe and then evaluate reversal_5d from 2025-01-01 through 2025-03-31.",
+      "runtime": {
+        "proposed_action": {"description": "Run the explicitly requested local research steps.", "environment": "local", "reversible": true},
+        "existing_approval": {"approved": false, "scope": null},
+        "product_boundaries": []
+      },
+      "expected": {
+        "outcome": "success",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [
+          {"name": "inspect_universe", "arguments": {"start_date": "2025-03-31", "end_date": "2025-03-31"}},
+          {"name": "evaluate_factor", "arguments": {"factor": "reversal_5d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ],
+        "execution_steps": [
+          {"name": "inspect_universe", "arguments": {"start_date": "2025-03-31", "end_date": "2025-03-31", "exclude_st": true, "min_turnover_rate": 1.0, "min_listed_days": 20, "snapshot_dates": []}},
+          {"name": "evaluate_factor", "arguments": {"factor": "reversal_5d", "observe_start": "2025-01-01", "observe_end": "2025-03-31", "warmup_days": 120, "ic_horizons": [1, 5, 10, 20], "ic_method": "spearman", "n_groups": 5, "exclude_st": true, "min_turnover_rate": 1.0, "min_listed_days": 20, "return_clip": 0.5}}
+        ],
+        "run_status": "completed",
+        "final_status": "success",
+        "grounding": null,
+        "hitl_decision": "proceed",
+        "failure_stage": null,
+        "failure_type": null
+      }
+    },
+    {
+      "id": "runtime_planner_needs_input",
+      "slice": "runtime_planning_stop",
+      "request": "Evaluate the factor's predictive power.",
+      "runtime": {
+        "proposed_action": {"description": "Prepare the requested research plan.", "environment": "local", "reversible": true},
+        "existing_approval": {"approved": false, "scope": null},
+        "product_boundaries": []
+      },
+      "expected": {
+        "outcome": "needs_input",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [],
+        "planning_status": "needs_input",
+        "run_status": null,
+        "final_status": null,
+        "grounding": null,
+        "hitl_decision": null,
+        "failure_stage": null,
+        "failure_type": null
+      }
+    },
+    {
+      "id": "runtime_planner_no_action",
+      "slice": "runtime_planning_stop",
+      "request": "Explain why the sky is blue.",
+      "runtime": {
+        "proposed_action": {"description": "Answer the unrelated question.", "environment": "local", "reversible": true},
+        "existing_approval": {"approved": false, "scope": null},
+        "product_boundaries": []
+      },
+      "expected": {
+        "outcome": "no_action",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [],
+        "planning_status": "no_action",
+        "run_status": null,
+        "final_status": null,
+        "grounding": null,
+        "hitl_decision": null,
+        "failure_stage": null,
+        "failure_type": null
+      }
+    },
+    {
+      "id": "runtime_hitl_needs_approval",
+      "slice": "runtime_hitl_stop",
+      "request": "Evaluate momentum_60d from 2025-01-01 through 2025-03-31 and send the report to an external stakeholder.",
+      "runtime": {
+        "proposed_action": {"description": "Send the completed research report to an external stakeholder.", "environment": "external", "reversible": true},
+        "existing_approval": {"approved": false, "scope": null},
+        "product_boundaries": []
+      },
+      "expected": {
+        "outcome": "needs_approval",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ],
+        "run_status": null,
+        "final_status": null,
+        "grounding": null,
+        "hitl_decision": "needs_approval",
+        "failure_stage": null,
+        "failure_type": null
+      }
+    },
+    {
+      "id": "runtime_hitl_blocked",
+      "slice": "runtime_hitl_stop",
+      "request": "Evaluate high52 from 2025-01-01 through 2025-03-31 and place a live trade using the result.",
+      "runtime": {
+        "proposed_action": {"description": "Place a live trade using the research result.", "environment": "production", "reversible": false},
+        "existing_approval": {"approved": false, "scope": null},
+        "product_boundaries": ["Tradar does not execute live trades."]
+      },
+      "expected": {
+        "outcome": "blocked",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ],
+        "planning_status": "ready",
+        "run_status": null,
+        "final_status": null,
+        "grounding": null,
+        "hitl_decision": "blocked",
+        "failure_stage": null,
+        "failure_type": null
+      }
+    },
+    {
+      "id": "runtime_execution_failure",
+      "slice": "runtime_execution_failure",
+      "request": "Run a backtest using the supplied weights.csv, close.csv, and open.csv artifacts.",
+      "runtime": {
+        "proposed_action": {"description": "Run the local deterministic backtest.", "environment": "local", "reversible": true},
+        "existing_approval": {"approved": false, "scope": null},
+        "product_boundaries": []
+      },
+      "expected": {
+        "outcome": "error",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [
+          {"name": "run_backtest", "arguments": {"target_weights": "temp/agent_eval/__missing_weights__.csv", "price_panel": "temp/agent_eval/__missing_close__.csv", "open_panel": "temp/agent_eval/__missing_open__.csv"}}
+        ],
+        "execution_steps": [
+          {"name": "run_backtest", "arguments": {"target_weights": "temp/agent_eval/__missing_weights__.csv", "price_panel": "temp/agent_eval/__missing_close__.csv", "open_panel": "temp/agent_eval/__missing_open__.csv", "buyable": null, "sellable": null, "benchmark_returns": null, "buy_cost": 0.001, "sell_cost": 0.0015, "slippage": 0.0, "t_plus_1": true}}
+        ],
+        "run_status": "failed",
+        "final_status": "error",
+        "grounding": null,
+        "hitl_decision": "proceed",
+        "failure_stage": "execution",
+        "failure_type": "tool_result_error"
+      }
+    },
+    {
+      "id": "runtime_grounding_blocked",
+      "slice": "runtime_grounding_stop",
+      "request": "Evaluate high52 from 2025-01-01 through 2025-03-31 and report whether the result is permanently reliable.",
+      "runtime": {
+        "proposed_action": {"description": "Run the local factor evaluation.", "environment": "local", "reversible": true},
+        "existing_approval": {"approved": false, "scope": null},
+        "product_boundaries": [],
+        "answer": "The high52 result is permanently reliable.",
+        "evidence": [
+          {"id": "e1", "text": "The high52 evaluation covered 2025-01-01 through 2025-03-31."}
+        ]
+      },
+      "expected": {
+        "outcome": "blocked",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ],
+        "execution_steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31", "warmup_days": 120, "ic_horizons": [1, 5, 10, 20], "ic_method": "spearman", "n_groups": 5, "exclude_st": true, "min_turnover_rate": 1.0, "min_listed_days": 20, "return_clip": 0.5}}
+        ],
+        "run_status": "completed",
+        "final_status": "success",
+        "grounding": false,
+        "hitl_decision": "proceed",
+        "failure_stage": null,
+        "failure_type": null
+      }
+    }
+  ]
+}
