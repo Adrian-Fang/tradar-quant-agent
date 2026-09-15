@@ -175,7 +175,7 @@ def _trajectory(expected_steps: list[dict[str, Any]], actual_steps: list[dict[st
     }
 
 
-def _infer_failure(case: dict[str, Any], observed: dict[str, Any], checks: dict[str, bool]) -> tuple[str | None, str | None]:
+def _infer_failure(case: dict[str, Any], observed: dict[str, Any], checks: dict[str, bool], hitl_stop: bool) -> tuple[str | None, str | None]:
     orchestration = observed["orchestration"]
     if orchestration is not None and orchestration["status"] == "error":
         return "orchestration", orchestration["type"]
@@ -202,6 +202,8 @@ def _infer_failure(case: dict[str, Any], observed: dict[str, Any], checks: dict[
         return "planning", "plan_mismatch"
     if not checks["retrieval"]:
         return "retrieval", "retrieval_mismatch"
+    if hitl_stop and not checks["hitl"]:
+        return "hitl", "decision_mismatch"
     expected_steps = case["expected"].get("required_steps", [])
     same_name_wrong_args = any(
         actual["name"] == expected["name"]
@@ -324,16 +326,22 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
         and observed["research_run"] is None
         and observed["grounding"] is None
     )
+    if hitl_stop:
+        grounding_matches = True
     expected_run_status = expected.get("run_status")
     expected_final_status = expected.get("final_status")
     actual_run = observed["research_run"]
     state_matches = (
-        actual_run is None
-        if expected_run_status is None and expected_final_status is None
+        True
+        if hitl_stop
         else (
-            actual_run is not None
-            and actual_run["status"] == expected_run_status
-            and actual_run["final_status"] == expected_final_status
+            actual_run is None
+            if expected_run_status is None and expected_final_status is None
+            else (
+                actual_run is not None
+                and actual_run["status"] == expected_run_status
+                and actual_run["final_status"] == expected_final_status
+            )
         )
     )
 
@@ -370,9 +378,11 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
     }
     base["outcome_pass"] = checks["outcome"]
     base["behavior_pass"] = all(checks.values())
-    base["grounding_pass"] = float(checks["grounding"]) if expected_grounding is not None else None
+    base["grounding_pass"] = (
+        None if hitl_stop or expected_grounding is None else float(checks["grounding"])
+    )
     base["hitl_correctness"] = float(checks["hitl"]) if expected_hitl is not None else None
-    base["failure_stage"], base["failure_type"] = _infer_failure(case, observed, checks)
+    base["failure_stage"], base["failure_type"] = _infer_failure(case, observed, checks, hitl_stop)
 
     expected_failure = expected.get("failure_stage") is not None
     if expected_failure:

@@ -75,6 +75,24 @@ class AgentEvalTests(unittest.TestCase):
             self.assertIsNone(row["failure_stage"])
             self.assertTrue(row["case_pass"])
 
+    def test_over_gated_controlled_stop_attributes_hitl(self):
+        case = next(case for case in CASES if case["id"] == "simple_read_only_success")
+        for decision in ("needs_approval", "blocked"):
+            with self.subTest(decision=decision):
+                observed = copy.deepcopy(case["observed"])
+                observed["steps"] = []
+                observed["research_run"] = None
+                observed["grounding"] = None
+                observed["hitl"] = {"decision": decision}
+                observed["outcome"] = {"status": decision}
+
+                row = score_case(case, observed)
+
+                self.assertFalse(row["behavior_pass"])
+                self.assertEqual((row["failure_stage"], row["failure_type"]), ("hitl", "decision_mismatch"))
+                self.assertIsNone(row["trajectory"])
+                self.assertIsNone(row["grounding_pass"])
+
     def test_planner_error_is_planning_failure(self):
         case = copy.deepcopy(CASES[0])
         case["id"] = "planner_provider_failure"
