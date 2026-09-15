@@ -21,10 +21,14 @@
       },
       "observed": {
         "context": {"selected_ids": ["request_scope"]},
+        "planning": {"status": "ready", "steps": [
+          {"name": "inspect_universe", "arguments": {"start_date": "2026-08-31", "end_date": "2026-08-31"}}
+        ]},
         "steps": [
           {"name": "inspect_universe", "arguments": {"start_date": "2026-08-31", "end_date": "2026-08-31"}, "status": "success"}
         ],
         "retrieval": {"status": "not_used", "research_ids": []},
+        "orchestration": null,
         "research_run": {"status": "completed", "final_status": "success"},
         "grounding": {"fully_grounded": true, "labels": ["supported"]},
         "hitl": {"decision": "proceed"},
@@ -54,11 +58,16 @@
       },
       "observed": {
         "context": {"selected_ids": ["request_scope", "research_scope"]},
+        "planning": {"status": "ready", "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "reversal_5d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}},
+          {"name": "run_backtest", "arguments": {"target_weights": "weights.csv", "price_panel": "close.csv", "open_panel": "open.csv"}}
+        ]},
         "steps": [
           {"name": "evaluate_factor", "arguments": {"factor": "reversal_5d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "success"},
           {"name": "run_backtest", "arguments": {"target_weights": "weights.csv", "price_panel": "close.csv", "open_panel": "open.csv"}, "status": "success"}
         ],
         "retrieval": {"status": "ok", "research_ids": ["RR-001"]},
+        "orchestration": null,
         "research_run": {"status": "completed", "final_status": "success"},
         "grounding": {"fully_grounded": true, "labels": ["supported"]},
         "hitl": {"decision": "proceed"},
@@ -80,20 +89,24 @@
         ],
         "run_status": "failed",
         "final_status": "error",
-        "grounding": false,
-        "hitl_decision": "not_required",
+        "grounding": null,
+        "hitl_decision": null,
         "failure_stage": "context",
         "failure_type": "missing_required_context"
       },
       "observed": {
         "context": {"selected_ids": ["request_scope"]},
+        "planning": {"status": "ready", "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ]},
         "steps": [
           {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "success"}
         ],
         "retrieval": {"status": "not_used", "research_ids": []},
+        "orchestration": null,
         "research_run": {"status": "failed", "final_status": "error"},
-        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
-        "hitl": {"decision": "not_required"},
+        "grounding": null,
+        "hitl": null,
         "outcome": {"status": "error"},
         "failure": {"stage": "context", "type": "missing_required_context"}
       }
@@ -113,20 +126,24 @@
         ],
         "run_status": "failed",
         "final_status": "error",
-        "grounding": false,
-        "hitl_decision": "not_required",
+        "grounding": null,
+        "hitl_decision": null,
         "failure_stage": "planning",
         "failure_type": "missing_required_step"
       },
       "observed": {
         "context": {"selected_ids": ["request_scope"]},
+        "planning": {"status": "ready", "steps": [
+          {"name": "inspect_universe", "arguments": {"start_date": "2026-08-31", "end_date": "2026-08-31"}}
+        ]},
         "steps": [
           {"name": "inspect_universe", "arguments": {"start_date": "2026-08-31", "end_date": "2026-08-31"}, "status": "success"}
         ],
         "retrieval": {"status": "not_used", "research_ids": []},
+        "orchestration": null,
         "research_run": {"status": "failed", "final_status": "error"},
-        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
-        "hitl": {"decision": "not_required"},
+        "grounding": null,
+        "hitl": null,
         "outcome": {"status": "error"},
         "failure": {"stage": "planning", "type": "missing_required_step"}
       }
@@ -145,21 +162,26 @@
         ],
         "run_status": "failed",
         "final_status": "error",
-        "grounding": false,
-        "hitl_decision": "not_required",
+        "grounding": null,
+        "hitl_decision": null,
         "failure_stage": "planning",
         "failure_type": "unnecessary_step"
       },
       "observed": {
         "context": {"selected_ids": ["request_scope"]},
+        "planning": {"status": "ready", "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}},
+          {"name": "inspect_universe", "arguments": {"start_date": "2026-08-31", "end_date": "2026-08-31"}}
+        ]},
         "steps": [
           {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "success"},
           {"name": "inspect_universe", "arguments": {"start_date": "2026-08-31", "end_date": "2026-08-31"}, "status": "success"}
         ],
         "retrieval": {"status": "not_used", "research_ids": []},
+        "orchestration": null,
         "research_run": {"status": "failed", "final_status": "error"},
-        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
-        "hitl": {"decision": "not_required"},
+        "grounding": null,
+        "hitl": null,
         "outcome": {"status": "error"},
         "failure": {"stage": "planning", "type": "unnecessary_step"}
       }
@@ -178,20 +200,24 @@
         ],
         "run_status": "failed",
         "final_status": "error",
-        "grounding": false,
-        "hitl_decision": "not_required",
+        "grounding": null,
+        "hitl_decision": null,
         "failure_stage": "tool",
         "failure_type": "wrong_arguments"
       },
       "observed": {
         "context": {"selected_ids": ["request_scope"]},
+        "planning": {"status": "ready", "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ]},
         "steps": [
           {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-30"}, "status": "success"}
         ],
         "retrieval": {"status": "not_used", "research_ids": []},
+        "orchestration": null,
         "research_run": {"status": "failed", "final_status": "error"},
-        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
-        "hitl": {"decision": "not_required"},
+        "grounding": null,
+        "hitl": null,
         "outcome": {"status": "error"},
         "failure": {"stage": "tool", "type": "wrong_arguments"}
       }
@@ -210,20 +236,24 @@
         ],
         "run_status": "failed",
         "final_status": "error",
-        "grounding": false,
-        "hitl_decision": "not_required",
+        "grounding": null,
+        "hitl_decision": null,
         "failure_stage": "execution",
         "failure_type": "tool_result_error"
       },
       "observed": {
         "context": {"selected_ids": ["request_scope"]},
+        "planning": {"status": "ready", "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ]},
         "steps": [
           {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "error"}
         ],
         "retrieval": {"status": "not_used", "research_ids": []},
+        "orchestration": null,
         "research_run": {"status": "failed", "final_status": "error"},
-        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
-        "hitl": {"decision": "not_required"},
+        "grounding": null,
+        "hitl": null,
         "outcome": {"status": "error"},
         "failure": {"stage": "execution", "type": "tool_result_error"}
       }
@@ -235,25 +265,28 @@
       "expected": {
         "outcome": "abstain",
         "context_ids": ["request_scope"],
-        "retrieval_status": "ok",
-        "retrieval_ids": ["RR-006"],
+        "retrieval_status": "abstain",
+        "retrieval_ids": [],
         "required_steps": [],
-        "run_status": "running",
-        "final_status": "running",
-        "grounding": false,
-        "hitl_decision": "not_required",
-        "failure_stage": "retrieval",
-        "failure_type": "retrieval_abstention"
+        "planning_status": null,
+        "run_status": null,
+        "final_status": null,
+        "grounding": null,
+        "hitl_decision": null,
+        "failure_stage": null,
+        "failure_type": null
       },
       "observed": {
         "context": {"selected_ids": ["request_scope"]},
+        "planning": null,
         "steps": [],
         "retrieval": {"status": "abstain", "research_ids": []},
-        "research_run": {"status": "running", "final_status": "running"},
-        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
-        "hitl": {"decision": "not_required"},
+        "research_run": null,
+        "grounding": null,
+        "hitl": null,
+        "orchestration": null,
         "outcome": {"status": "abstain"},
-        "failure": {"stage": "retrieval", "type": "retrieval_abstention"}
+        "failure": null
       }
     },
     {
@@ -277,10 +310,14 @@
       },
       "observed": {
         "context": {"selected_ids": ["request_scope", "research_scope"]},
+        "planning": {"status": "ready", "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ]},
         "steps": [
           {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "success"}
         ],
         "retrieval": {"status": "ok", "research_ids": ["RR-002"]},
+        "orchestration": null,
         "research_run": {"status": "completed", "final_status": "success"},
         "grounding": {"fully_grounded": false, "labels": ["unsupported", "contradicted"]},
         "hitl": {"decision": "proceed"},
@@ -309,10 +346,14 @@
       },
       "observed": {
         "context": {"selected_ids": ["request_scope"]},
+        "planning": {"status": "ready", "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ]},
         "steps": [
           {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "success"}
         ],
         "retrieval": {"status": "not_used", "research_ids": []},
+        "orchestration": null,
         "research_run": {"status": "completed", "final_status": "success"},
         "grounding": {"fully_grounded": true, "labels": ["supported"]},
         "hitl": {"decision": "needs_approval"},
@@ -330,22 +371,25 @@
         "retrieval_status": "not_used",
         "retrieval_ids": [],
         "required_steps": [],
-        "run_status": "running",
-        "final_status": "running",
-        "grounding": false,
+        "planning_status": null,
+        "run_status": null,
+        "final_status": null,
+        "grounding": null,
         "hitl_decision": "blocked",
-        "failure_stage": "hitl",
-        "failure_type": "product_boundary"
+        "failure_stage": null,
+        "failure_type": null
       },
       "observed": {
         "context": {"selected_ids": ["request_scope"]},
+        "planning": null,
         "steps": [],
         "retrieval": {"status": "not_used", "research_ids": []},
-        "research_run": {"status": "running", "final_status": "running"},
-        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
+        "research_run": null,
+        "grounding": null,
         "hitl": {"decision": "blocked"},
+        "orchestration": null,
         "outcome": {"status": "blocked"},
-        "failure": {"stage": "hitl", "type": "product_boundary"}
+        "failure": null
       }
     },
     {
@@ -369,10 +413,14 @@
       },
       "observed": {
         "context": {"selected_ids": ["request_scope"]},
+        "planning": {"status": "ready", "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ]},
         "steps": [
           {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "success"}
         ],
         "retrieval": {"status": "not_used", "research_ids": []},
+        "orchestration": null,
         "research_run": {"status": "failed", "final_status": "error"},
         "grounding": {"fully_grounded": true, "labels": ["supported"]},
         "hitl": {"decision": "proceed"},
@@ -390,20 +438,23 @@
         "retrieval_status": "not_used",
         "retrieval_ids": [],
         "required_steps": [],
-        "run_status": "running",
-        "final_status": "running",
-        "grounding": false,
-        "hitl_decision": "not_required",
+        "planning_status": null,
+        "run_status": null,
+        "final_status": null,
+        "grounding": null,
+        "hitl_decision": null,
         "failure_stage": "orchestration",
         "failure_type": "invalid_execution_envelope"
       },
       "observed": {
         "context": {"selected_ids": ["request_scope"]},
+        "planning": null,
         "steps": [],
         "retrieval": {"status": "not_used", "research_ids": []},
-        "research_run": {"status": "running", "final_status": "running"},
-        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
-        "hitl": {"decision": "not_required"},
+        "research_run": null,
+        "grounding": null,
+        "hitl": null,
+        "orchestration": {"status": "error", "type": "invalid_execution_envelope"},
         "outcome": {"status": "error"},
         "failure": {"stage": "orchestration", "type": "invalid_execution_envelope"}
       }
@@ -413,7 +464,7 @@
       "slice": "outcome_failure",
       "request": "Return the grounded result after the completed factor evaluation.",
       "expected": {
-        "outcome": "error",
+        "outcome": "success",
         "context_ids": ["request_scope"],
         "retrieval_status": "not_used",
         "retrieval_ids": [],
@@ -429,10 +480,14 @@
       },
       "observed": {
         "context": {"selected_ids": ["request_scope"]},
+        "planning": {"status": "ready", "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ]},
         "steps": [
           {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "success"}
         ],
         "retrieval": {"status": "not_used", "research_ids": []},
+        "orchestration": null,
         "research_run": {"status": "completed", "final_status": "success"},
         "grounding": {"fully_grounded": true, "labels": ["supported"]},
         "hitl": {"decision": "proceed"},

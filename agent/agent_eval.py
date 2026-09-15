@@ -9,7 +9,7 @@ from typing import Any
 from .core.resources import load_json
 
 
-CASES = load_json("eval/whole_system.json")
+CASES = load_json("eval/agent.json")
 FAILURE_STAGES = {
     "context",
     "retrieval",
@@ -22,29 +22,58 @@ FAILURE_STAGES = {
     "orchestration",
     "outcome",
 }
-OUTCOME_STATUSES = {"success", "error", "abstain", "needs_approval", "blocked"}
+OUTCOME_STATUSES = {"success", "error", "abstain", "needs_input", "no_action", "needs_approval", "blocked"}
+PLANNING_STATUSES = {"ready", "needs_input", "no_action"}
 REQUIRED_OBSERVED_FIELDS = {
     "context",
+    "planning",
     "steps",
     "retrieval",
     "research_run",
     "grounding",
     "hitl",
+    "orchestration",
     "outcome",
-    "failure",
 }
 GROUNDING_LABELS = {"supported", "unsupported", "contradicted", "unverifiable"}
 
 
 def _validate_observed(observed: Any) -> None:
-    if not isinstance(observed, dict) or set(observed) != REQUIRED_OBSERVED_FIELDS:
+    if (
+        not isinstance(observed, dict)
+        or not REQUIRED_OBSERVED_FIELDS.issubset(observed)
+        or set(observed) - REQUIRED_OBSERVED_FIELDS - {"failure"}
+    ):
         raise ValueError("observed envelope has invalid fields")
 
     context = observed["context"]
-    if not isinstance(context, dict) or not isinstance(context.get("selected_ids"), list):
-        raise ValueError("observed.context.selected_ids must be a list")
-    if any(not isinstance(value, str) for value in context["selected_ids"]):
-        raise ValueError("observed context ids must be strings")
+    if context is not None:
+        if not isinstance(context, dict) or not isinstance(context.get("selected_ids"), list):
+            raise ValueError("observed.context.selected_ids must be a list")
+        if any(not isinstance(value, str) for value in context["selected_ids"]):
+            raise ValueError("observed context ids must be strings")
+
+    planning = observed["planning"]
+    if planning is not None:
+        if (
+            not isinstance(planning, dict)
+            or set(planning) != {"status", "steps"}
+            or planning.get("status") not in PLANNING_STATUSES
+            or not isinstance(planning.get("steps"), list)
+        ):
+            raise ValueError("observed.planning has invalid shape")
+        if planning["status"] == "ready" and not planning["steps"]:
+            raise ValueError("ready planning must contain steps")
+        if planning["status"] != "ready" and planning["steps"]:
+            raise ValueError("non-ready planning must not contain steps")
+        for step in planning["steps"]:
+            if (
+                not isinstance(step, dict)
+                or set(step) != {"name", "arguments"}
+                or not isinstance(step["name"], str)
+                or not isinstance(step["arguments"], dict)
+            ):
+                raise ValueError("observed planning step has invalid shape")
 
     if not isinstance(observed["steps"], list):
         raise ValueError("observed.steps must be a list")
@@ -59,44 +88,52 @@ def _validate_observed(observed: Any) -> None:
             raise ValueError("observed step has invalid shape")
 
     retrieval = observed["retrieval"]
-    if (
-        not isinstance(retrieval, dict)
-        or not isinstance(retrieval.get("status"), str)
-        or not isinstance(retrieval.get("research_ids"), list)
-    ):
-        raise ValueError("observed.retrieval has invalid shape")
-    if any(not isinstance(value, str) for value in retrieval["research_ids"]):
-        raise ValueError("observed research ids must be strings")
+    if retrieval is not None:
+        if (
+            not isinstance(retrieval, dict)
+            or not isinstance(retrieval.get("status"), str)
+            or not isinstance(retrieval.get("research_ids"), list)
+        ):
+            raise ValueError("observed.retrieval has invalid shape")
+        if any(not isinstance(value, str) for value in retrieval["research_ids"]):
+            raise ValueError("observed research ids must be strings")
 
     run = observed["research_run"]
-    if (
-        not isinstance(run, dict)
-        or run.get("status") not in {"running", "completed", "failed"}
-        or run.get("final_status") not in {"running", "success", "partial", "error"}
-    ):
-        raise ValueError("observed.research_run has invalid lifecycle")
+    if run is not None:
+        if (
+            not isinstance(run, dict)
+            or run.get("status") not in {"running", "completed", "failed"}
+            or run.get("final_status") not in {"running", "success", "partial", "error"}
+        ):
+            raise ValueError("observed.research_run has invalid lifecycle")
 
     grounding = observed["grounding"]
-    if (
-        not isinstance(grounding, dict)
-        or not isinstance(grounding.get("fully_grounded"), bool)
-        or not isinstance(grounding.get("labels"), list)
-        or any(label not in GROUNDING_LABELS for label in grounding["labels"])
-    ):
-        raise ValueError("observed.grounding has invalid shape")
+    if grounding is not None:
+        if (
+            not isinstance(grounding, dict)
+            or not isinstance(grounding.get("fully_grounded"), bool)
+            or not isinstance(grounding.get("labels"), list)
+            or any(label not in GROUNDING_LABELS for label in grounding["labels"])
+        ):
+            raise ValueError("observed.grounding has invalid shape")
 
-    if not isinstance(observed["hitl"], dict) or not isinstance(observed["hitl"].get("decision"), str):
+    hitl = observed["hitl"]
+    if hitl is not None and (
+        not isinstance(hitl, dict)
+        or hitl.get("decision") not in {"proceed", "needs_approval", "blocked"}
+    ):
         raise ValueError("observed.hitl has invalid shape")
+
+    orchestration = observed["orchestration"]
+    if orchestration is not None and (
+        not isinstance(orchestration, dict)
+        or orchestration.get("status") not in {"ok", "error"}
+        or (orchestration["status"] == "error" and not isinstance(orchestration.get("type"), str))
+    ):
+        raise ValueError("observed.orchestration has invalid shape")
+
     if not isinstance(observed["outcome"], dict) or observed["outcome"].get("status") not in OUTCOME_STATUSES:
         raise ValueError("observed.outcome has invalid status")
-
-    failure = observed["failure"]
-    if failure is not None and (
-        not isinstance(failure, dict)
-        or failure.get("stage") not in FAILURE_STAGES
-        or not isinstance(failure.get("type"), str)
-    ):
-        raise ValueError("observed.failure has invalid shape")
 
 
 def _trajectory(expected_steps: list[dict[str, Any]], actual_steps: list[dict[str, Any]]) -> dict[str, Any]:
@@ -135,37 +172,53 @@ def _trajectory(expected_steps: list[dict[str, Any]], actual_steps: list[dict[st
 
 
 def _infer_failure(case: dict[str, Any], observed: dict[str, Any], checks: dict[str, bool]) -> tuple[str | None, str | None]:
-    if observed["failure"] is not None:
-        return observed["failure"]["stage"], observed["failure"]["type"]
+    orchestration = observed["orchestration"]
+    if orchestration is not None and orchestration["status"] == "error":
+        return "orchestration", orchestration["type"]
+    if any(step["status"] == "error" for step in observed["steps"]):
+        return "execution", "tool_result_error"
     if all(checks.values()):
         return None, None
     if not checks["context"]:
+        expected_ids = set(case["expected"].get("context_ids", []))
+        actual_ids = set(observed["context"]["selected_ids"]) if observed["context"] is not None else set()
+        if actual_ids < expected_ids:
+            return "context", "missing_required_context"
         return "context", "context_mismatch"
+    if not checks["planning"]:
+        expected_steps = case["expected"].get("required_steps", [])
+        actual_planning = observed["planning"]
+        if actual_planning is not None:
+            plan_trajectory = _trajectory(expected_steps, actual_planning["steps"])
+            if plan_trajectory["required_step_recall"] < 1.0:
+                return "planning", "missing_required_step"
+            if plan_trajectory["precision"] < 1.0:
+                return "planning", "unnecessary_step"
+        return "planning", "plan_mismatch"
     if not checks["retrieval"]:
         return "retrieval", "retrieval_mismatch"
-    if any(step["status"] == "error" for step in observed["steps"]):
-        return "execution", "tool_result_error"
-
     expected_steps = case["expected"].get("required_steps", [])
-    actual_steps = observed["steps"]
     same_name_wrong_args = any(
         actual["name"] == expected["name"]
         and actual["arguments"] != expected["arguments"]
-        for actual in actual_steps
+        for actual in observed["steps"]
         for expected in expected_steps
     )
     if same_name_wrong_args:
         return "tool", "wrong_arguments"
     if not checks["trajectory"]:
-        return "planning", "trajectory_mismatch"
+        return "orchestration", "trajectory_mismatch"
     if not checks["state"]:
         return "state", "lifecycle_mismatch"
     if not checks["grounding"]:
+        if case["expected"].get("grounding") is True and observed["grounding"] is not None:
+            if not observed["grounding"]["fully_grounded"]:
+                return "grounding", "ungrounded_claim"
         return "grounding", "grounding_mismatch"
     if not checks["hitl"]:
         return "hitl", "decision_mismatch"
     if not checks["outcome"]:
-        return "outcome", "outcome_mismatch"
+        return "outcome", "wrong_final_outcome"
     return "orchestration", "unclassified_failure"
 
 
@@ -212,28 +265,69 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
     trajectory = _trajectory(expected.get("required_steps", []), observed["steps"])
     base["trajectory"] = trajectory
 
+    expected_planning_status = expected.get("planning_status", "ready")
+    actual_planning = observed["planning"]
+    planning_matches = (
+        actual_planning is None
+        if expected_planning_status is None
+        else (
+            actual_planning is not None
+            and actual_planning["status"] == expected_planning_status
+            and actual_planning["steps"] == expected.get("required_steps", [])
+        )
+    )
+    actual_retrieval_status = observed["retrieval"]["status"] if observed["retrieval"] is not None else "not_used"
+    actual_retrieval_ids = observed["retrieval"]["research_ids"] if observed["retrieval"] is not None else []
+    expected_grounding = expected.get("grounding")
+    actual_grounding = observed["grounding"]
+    grounding_matches = (
+        actual_grounding is None
+        if expected_grounding is None
+        else actual_grounding is not None and actual_grounding["fully_grounded"] == expected_grounding
+    )
+    expected_hitl = expected.get("hitl_decision")
+    actual_hitl = observed["hitl"]
+    hitl_matches = (
+        actual_hitl is None
+        if expected_hitl is None
+        else actual_hitl is not None and actual_hitl["decision"] == expected_hitl
+    )
+    expected_run_status = expected.get("run_status")
+    expected_final_status = expected.get("final_status")
+    actual_run = observed["research_run"]
+    state_matches = (
+        actual_run is None
+        if expected_run_status is None and expected_final_status is None
+        else (
+            actual_run is not None
+            and actual_run["status"] == expected_run_status
+            and actual_run["final_status"] == expected_final_status
+        )
+    )
+
     checks = {
-        "context": observed["context"]["selected_ids"] == expected.get("context_ids", []),
+        "context": (
+            observed["context"] is not None
+            and observed["context"]["selected_ids"] == expected.get("context_ids", [])
+        ),
+        "planning": planning_matches,
         "retrieval": (
-            observed["retrieval"]["status"] == expected.get("retrieval_status", "not_used")
-            and observed["retrieval"]["research_ids"] == expected.get("retrieval_ids", [])
+            actual_retrieval_status == expected.get("retrieval_status", "not_used")
+            and actual_retrieval_ids == expected.get("retrieval_ids", [])
         ),
         "trajectory": (
             trajectory["required_step_recall"] == 1.0
             and trajectory["precision"] == 1.0
             and trajectory["order_correctness"] == 1.0
         ),
-        "state": (
-            observed["research_run"]["status"] == expected.get("run_status", "running")
-            and observed["research_run"]["final_status"] == expected.get("final_status", "running")
-        ),
-        "grounding": observed["grounding"]["fully_grounded"] == expected.get("grounding", False),
-        "hitl": observed["hitl"]["decision"] == expected.get("hitl_decision", "not_required"),
+        "state": state_matches,
+        "grounding": grounding_matches,
+        "hitl": hitl_matches,
         "outcome": actual_outcome == expected["outcome"],
     }
     base["outcome_pass"] = checks["outcome"]
-    base["grounding_pass"] = float(checks["grounding"])
-    base["hitl_correctness"] = float(checks["hitl"])
+    base["grounding_pass"] = float(checks["grounding"]) if expected_grounding is not None else None
+    base["hitl_correctness"] = float(checks["hitl"]) if expected_hitl is not None else None
     base["failure_stage"], base["failure_type"] = _infer_failure(case, observed, checks)
 
     expected_failure = expected.get("failure_stage") is not None
@@ -242,7 +336,22 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
             base["failure_stage"] == expected["failure_stage"]
             and base["failure_type"] == expected["failure_type"]
         )
-        base["case_pass"] = bool(checks["outcome"] and base["failure_attribution_correct"])
+        excluded_checks = {
+            "context": {"context"},
+            "retrieval": {"retrieval"},
+            "planning": {"planning", "trajectory"},
+            "tool": {"trajectory"},
+            "state": {"state"},
+            "grounding": {"grounding"},
+            "hitl": {"hitl"},
+            "outcome": {"outcome"},
+            "execution": set(),
+            "orchestration": set(),
+        }[expected["failure_stage"]]
+        behavioral_checks_pass = all(
+            check for name, check in checks.items() if name not in excluded_checks
+        )
+        base["case_pass"] = bool(behavioral_checks_pass and base["failure_attribution_correct"])
     else:
         base["case_pass"] = all(checks.values())
     return base

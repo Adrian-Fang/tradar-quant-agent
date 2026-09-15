@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import unittest
 
-from agent.whole_system_eval import CASES, _metrics, run_eval, score_case
+from agent.agent_eval import CASES, _metrics, run_eval, score_case
 
 
 class WholeSystemEvalTests(unittest.TestCase):
@@ -15,6 +15,8 @@ class WholeSystemEvalTests(unittest.TestCase):
             self.assertIn("expected", case)
             self.assertIn("observed", case)
             self.assertIn("required_steps", case["expected"])
+            self.assertIn("planning", case["observed"])
+            self.assertIn("orchestration", case["observed"])
             self.assertNotIn("expected", case["observed"])
 
     def test_fixture_all_cases_pass(self):
@@ -22,7 +24,7 @@ class WholeSystemEvalTests(unittest.TestCase):
         self.assertEqual(len(rows), 14)
         self.assertTrue(all(row["case_pass"] for row in rows))
         self.assertEqual(meta["metrics"]["case_pass_rate"], 1.0)
-        self.assertEqual(meta["metrics"]["outcome_pass_rate"], 1.0)
+        self.assertEqual(meta["metrics"]["outcome_pass_rate"], 13 / 14)
         self.assertEqual(meta["metrics"]["failure_attribution_accuracy"], 1.0)
         self.assertEqual(meta["metrics"]["eval_failures"], 0)
 
@@ -41,7 +43,7 @@ class WholeSystemEvalTests(unittest.TestCase):
         reversed_observed["steps"].reverse()
         reversed_row = score_case(ordered, reversed_observed)
         self.assertEqual(reversed_row["trajectory"]["order_correctness"], 0.0)
-        self.assertEqual(reversed_row["failure_stage"], "planning")
+        self.assertEqual(reversed_row["failure_stage"], "orchestration")
 
     def test_failure_attribution_covers_component_stages(self):
         expected_stages = {
@@ -50,9 +52,7 @@ class WholeSystemEvalTests(unittest.TestCase):
             "extra_unnecessary_step": "planning",
             "wrong_tool_arguments": "tool",
             "tool_execution_failure": "execution",
-            "retrieval_abstention": "retrieval",
             "grounding_unsupported_and_contradicted_claims": "grounding",
-            "hitl_blocked_product_boundary": "hitl",
             "state_lifecycle_mismatch": "state",
             "orchestration_level_failure": "orchestration",
             "wrong_final_outcome_after_valid_trace": "outcome",
@@ -61,6 +61,12 @@ class WholeSystemEvalTests(unittest.TestCase):
             case = next(case for case in CASES if case["id"] == case_id)
             row = score_case(case, case["observed"])
             self.assertEqual(row["failure_stage"], stage)
+            self.assertTrue(row["case_pass"])
+
+        for case_id in ("retrieval_abstention", "hitl_blocked_product_boundary"):
+            case = next(case for case in CASES if case["id"] == case_id)
+            row = score_case(case, case["observed"])
+            self.assertIsNone(row["failure_stage"])
             self.assertTrue(row["case_pass"])
 
     def test_malformed_observed_envelope_is_eval_failure(self):
@@ -80,6 +86,59 @@ class WholeSystemEvalTests(unittest.TestCase):
         self.assertEqual(metrics["case_pass_rate"], 0.5)
         self.assertEqual(metrics["eval_failures"], 1)
         self.assertEqual(metrics["failure_breakdown"], {"contract_violation": 1})
+
+    def test_failure_field_is_debug_only(self):
+        case = next(case for case in CASES if case["id"] == "wrong_final_outcome_after_valid_trace")
+        without_debug = copy.deepcopy(case["observed"])
+        without_debug.pop("failure")
+        wrong_debug = copy.deepcopy(without_debug)
+        wrong_debug["failure"] = {"stage": "context", "type": "made_up"}
+        other_mismatch = copy.deepcopy(without_debug)
+        other_mismatch["grounding"] = {"fully_grounded": False, "labels": ["unverifiable"]}
+
+        self.assertTrue(score_case(case, without_debug)["case_pass"])
+        self.assertTrue(score_case(case, wrong_debug)["case_pass"])
+        self.assertFalse(score_case(case, other_mismatch)["case_pass"])
+
+    def test_ambiguous_execution_trace_is_unclassified_orchestration(self):
+        case = CASES[0]
+        observed = copy.deepcopy(case["observed"])
+        observed["steps"] = []
+        row = score_case(case, observed)
+        self.assertEqual(row["failure_stage"], "orchestration")
+        self.assertEqual(row["failure_type"], "trajectory_mismatch")
+
+    def test_planning_stops_allow_unreached_stages(self):
+        for status in ("needs_input", "no_action"):
+            case = {
+                "id": f"planning_{status}",
+                "expected": {
+                    "outcome": status,
+                    "context_ids": ["request_scope"],
+                    "retrieval_status": "not_used",
+                    "retrieval_ids": [],
+                    "required_steps": [],
+                    "planning_status": status,
+                    "run_status": None,
+                    "final_status": None,
+                    "grounding": None,
+                    "hitl_decision": None,
+                    "failure_stage": None,
+                    "failure_type": None,
+                },
+                "observed": {
+                    "context": {"selected_ids": ["request_scope"]},
+                    "planning": {"status": status, "steps": []},
+                    "steps": [],
+                    "retrieval": None,
+                    "research_run": None,
+                    "grounding": None,
+                    "hitl": None,
+                    "orchestration": None,
+                    "outcome": {"status": status},
+                },
+            }
+            self.assertTrue(score_case(case, case["observed"])["case_pass"])
 
     def test_repeat_rows_are_deterministic(self):
         rows, meta = run_eval(repeats=2)
