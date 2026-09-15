@@ -1,0 +1,444 @@
+{
+  "cases": [
+    {
+      "id": "simple_read_only_success",
+      "slice": "success",
+      "request": "Inspect the 2026-08-31 universe and report the available trading counts.",
+      "expected": {
+        "outcome": "success",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [
+          {"name": "inspect_universe", "arguments": {"start_date": "2026-08-31", "end_date": "2026-08-31"}}
+        ],
+        "run_status": "completed",
+        "final_status": "success",
+        "grounding": true,
+        "hitl_decision": "proceed",
+        "failure_stage": null,
+        "failure_type": null
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope"]},
+        "steps": [
+          {"name": "inspect_universe", "arguments": {"start_date": "2026-08-31", "end_date": "2026-08-31"}, "status": "success"}
+        ],
+        "retrieval": {"status": "not_used", "research_ids": []},
+        "research_run": {"status": "completed", "final_status": "success"},
+        "grounding": {"fully_grounded": true, "labels": ["supported"]},
+        "hitl": {"decision": "proceed"},
+        "outcome": {"status": "success"},
+        "failure": null
+      }
+    },
+    {
+      "id": "multi_step_research_success",
+      "slice": "success",
+      "request": "Evaluate the reversal factor and then run the explicitly supplied strategy weights.",
+      "expected": {
+        "outcome": "success",
+        "context_ids": ["request_scope", "research_scope"],
+        "retrieval_status": "ok",
+        "retrieval_ids": ["RR-001"],
+        "required_steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "reversal_5d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}},
+          {"name": "run_backtest", "arguments": {"target_weights": "weights.csv", "price_panel": "close.csv", "open_panel": "open.csv"}}
+        ],
+        "run_status": "completed",
+        "final_status": "success",
+        "grounding": true,
+        "hitl_decision": "proceed",
+        "failure_stage": null,
+        "failure_type": null
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope", "research_scope"]},
+        "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "reversal_5d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "success"},
+          {"name": "run_backtest", "arguments": {"target_weights": "weights.csv", "price_panel": "close.csv", "open_panel": "open.csv"}, "status": "success"}
+        ],
+        "retrieval": {"status": "ok", "research_ids": ["RR-001"]},
+        "research_run": {"status": "completed", "final_status": "success"},
+        "grounding": {"fully_grounded": true, "labels": ["supported"]},
+        "hitl": {"decision": "proceed"},
+        "outcome": {"status": "success"},
+        "failure": null
+      }
+    },
+    {
+      "id": "context_missing_required_input",
+      "slice": "context_failure",
+      "request": "Evaluate the factor with the research scope and benchmark context preserved.",
+      "expected": {
+        "outcome": "error",
+        "context_ids": ["request_scope", "research_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ],
+        "run_status": "failed",
+        "final_status": "error",
+        "grounding": false,
+        "hitl_decision": "not_required",
+        "failure_stage": "context",
+        "failure_type": "missing_required_context"
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope"]},
+        "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "success"}
+        ],
+        "retrieval": {"status": "not_used", "research_ids": []},
+        "research_run": {"status": "failed", "final_status": "error"},
+        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
+        "hitl": {"decision": "not_required"},
+        "outcome": {"status": "error"},
+        "failure": {"stage": "context", "type": "missing_required_context"}
+      }
+    },
+    {
+      "id": "missing_required_planning_step",
+      "slice": "planning_failure",
+      "request": "Inspect the universe and then evaluate the specified factor.",
+      "expected": {
+        "outcome": "error",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [
+          {"name": "inspect_universe", "arguments": {"start_date": "2026-08-31", "end_date": "2026-08-31"}},
+          {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ],
+        "run_status": "failed",
+        "final_status": "error",
+        "grounding": false,
+        "hitl_decision": "not_required",
+        "failure_stage": "planning",
+        "failure_type": "missing_required_step"
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope"]},
+        "steps": [
+          {"name": "inspect_universe", "arguments": {"start_date": "2026-08-31", "end_date": "2026-08-31"}, "status": "success"}
+        ],
+        "retrieval": {"status": "not_used", "research_ids": []},
+        "research_run": {"status": "failed", "final_status": "error"},
+        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
+        "hitl": {"decision": "not_required"},
+        "outcome": {"status": "error"},
+        "failure": {"stage": "planning", "type": "missing_required_step"}
+      }
+    },
+    {
+      "id": "extra_unnecessary_step",
+      "slice": "planning_failure",
+      "request": "Evaluate momentum_60d for the stated period; no universe inspection is needed.",
+      "expected": {
+        "outcome": "error",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ],
+        "run_status": "failed",
+        "final_status": "error",
+        "grounding": false,
+        "hitl_decision": "not_required",
+        "failure_stage": "planning",
+        "failure_type": "unnecessary_step"
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope"]},
+        "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "success"},
+          {"name": "inspect_universe", "arguments": {"start_date": "2026-08-31", "end_date": "2026-08-31"}, "status": "success"}
+        ],
+        "retrieval": {"status": "not_used", "research_ids": []},
+        "research_run": {"status": "failed", "final_status": "error"},
+        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
+        "hitl": {"decision": "not_required"},
+        "outcome": {"status": "error"},
+        "failure": {"stage": "planning", "type": "unnecessary_step"}
+      }
+    },
+    {
+      "id": "wrong_tool_arguments",
+      "slice": "tool_failure",
+      "request": "Evaluate momentum_60d through 2025-03-31.",
+      "expected": {
+        "outcome": "error",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ],
+        "run_status": "failed",
+        "final_status": "error",
+        "grounding": false,
+        "hitl_decision": "not_required",
+        "failure_stage": "tool",
+        "failure_type": "wrong_arguments"
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope"]},
+        "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-30"}, "status": "success"}
+        ],
+        "retrieval": {"status": "not_used", "research_ids": []},
+        "research_run": {"status": "failed", "final_status": "error"},
+        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
+        "hitl": {"decision": "not_required"},
+        "outcome": {"status": "error"},
+        "failure": {"stage": "tool", "type": "wrong_arguments"}
+      }
+    },
+    {
+      "id": "tool_execution_failure",
+      "slice": "execution_failure",
+      "request": "Run the requested factor evaluation.",
+      "expected": {
+        "outcome": "error",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ],
+        "run_status": "failed",
+        "final_status": "error",
+        "grounding": false,
+        "hitl_decision": "not_required",
+        "failure_stage": "execution",
+        "failure_type": "tool_result_error"
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope"]},
+        "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "error"}
+        ],
+        "retrieval": {"status": "not_used", "research_ids": []},
+        "research_run": {"status": "failed", "final_status": "error"},
+        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
+        "hitl": {"decision": "not_required"},
+        "outcome": {"status": "error"},
+        "failure": {"stage": "execution", "type": "tool_result_error"}
+      }
+    },
+    {
+      "id": "retrieval_abstention",
+      "slice": "retrieval_failure",
+      "request": "Use the research records to answer this factor question.",
+      "expected": {
+        "outcome": "abstain",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "ok",
+        "retrieval_ids": ["RR-006"],
+        "required_steps": [],
+        "run_status": "running",
+        "final_status": "running",
+        "grounding": false,
+        "hitl_decision": "not_required",
+        "failure_stage": "retrieval",
+        "failure_type": "retrieval_abstention"
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope"]},
+        "steps": [],
+        "retrieval": {"status": "abstain", "research_ids": []},
+        "research_run": {"status": "running", "final_status": "running"},
+        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
+        "hitl": {"decision": "not_required"},
+        "outcome": {"status": "abstain"},
+        "failure": {"stage": "retrieval", "type": "retrieval_abstention"}
+      }
+    },
+    {
+      "id": "grounding_unsupported_and_contradicted_claims",
+      "slice": "grounding_failure",
+      "request": "State the conclusion and claim that the result is permanently reliable.",
+      "expected": {
+        "outcome": "blocked",
+        "context_ids": ["request_scope", "research_scope"],
+        "retrieval_status": "ok",
+        "retrieval_ids": ["RR-002"],
+        "required_steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ],
+        "run_status": "completed",
+        "final_status": "success",
+        "grounding": true,
+        "hitl_decision": "proceed",
+        "failure_stage": "grounding",
+        "failure_type": "ungrounded_claim"
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope", "research_scope"]},
+        "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "success"}
+        ],
+        "retrieval": {"status": "ok", "research_ids": ["RR-002"]},
+        "research_run": {"status": "completed", "final_status": "success"},
+        "grounding": {"fully_grounded": false, "labels": ["unsupported", "contradicted"]},
+        "hitl": {"decision": "proceed"},
+        "outcome": {"status": "blocked"},
+        "failure": {"stage": "grounding", "type": "ungrounded_claim"}
+      }
+    },
+    {
+      "id": "hitl_needs_approval",
+      "slice": "hitl_gate",
+      "request": "Prepare the report and send it to the external stakeholder.",
+      "expected": {
+        "outcome": "needs_approval",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ],
+        "run_status": "completed",
+        "final_status": "success",
+        "grounding": true,
+        "hitl_decision": "needs_approval",
+        "failure_stage": null,
+        "failure_type": null
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope"]},
+        "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "success"}
+        ],
+        "retrieval": {"status": "not_used", "research_ids": []},
+        "research_run": {"status": "completed", "final_status": "success"},
+        "grounding": {"fully_grounded": true, "labels": ["supported"]},
+        "hitl": {"decision": "needs_approval"},
+        "outcome": {"status": "needs_approval"},
+        "failure": null
+      }
+    },
+    {
+      "id": "hitl_blocked_product_boundary",
+      "slice": "hitl_gate",
+      "request": "Place a live trade using the research result.",
+      "expected": {
+        "outcome": "blocked",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [],
+        "run_status": "running",
+        "final_status": "running",
+        "grounding": false,
+        "hitl_decision": "blocked",
+        "failure_stage": "hitl",
+        "failure_type": "product_boundary"
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope"]},
+        "steps": [],
+        "retrieval": {"status": "not_used", "research_ids": []},
+        "research_run": {"status": "running", "final_status": "running"},
+        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
+        "hitl": {"decision": "blocked"},
+        "outcome": {"status": "blocked"},
+        "failure": {"stage": "hitl", "type": "product_boundary"}
+      }
+    },
+    {
+      "id": "state_lifecycle_mismatch",
+      "slice": "state_failure",
+      "request": "Complete the factor evaluation and preserve its run lifecycle.",
+      "expected": {
+        "outcome": "error",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ],
+        "run_status": "completed",
+        "final_status": "success",
+        "grounding": true,
+        "hitl_decision": "proceed",
+        "failure_stage": "state",
+        "failure_type": "lifecycle_mismatch"
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope"]},
+        "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "success"}
+        ],
+        "retrieval": {"status": "not_used", "research_ids": []},
+        "research_run": {"status": "failed", "final_status": "error"},
+        "grounding": {"fully_grounded": true, "labels": ["supported"]},
+        "hitl": {"decision": "proceed"},
+        "outcome": {"status": "error"},
+        "failure": {"stage": "state", "type": "lifecycle_mismatch"}
+      }
+    },
+    {
+      "id": "orchestration_level_failure",
+      "slice": "orchestration_failure",
+      "request": "Run the explicitly supplied research plan.",
+      "expected": {
+        "outcome": "error",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [],
+        "run_status": "running",
+        "final_status": "running",
+        "grounding": false,
+        "hitl_decision": "not_required",
+        "failure_stage": "orchestration",
+        "failure_type": "invalid_execution_envelope"
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope"]},
+        "steps": [],
+        "retrieval": {"status": "not_used", "research_ids": []},
+        "research_run": {"status": "running", "final_status": "running"},
+        "grounding": {"fully_grounded": false, "labels": ["unverifiable"]},
+        "hitl": {"decision": "not_required"},
+        "outcome": {"status": "error"},
+        "failure": {"stage": "orchestration", "type": "invalid_execution_envelope"}
+      }
+    },
+    {
+      "id": "wrong_final_outcome_after_valid_trace",
+      "slice": "outcome_failure",
+      "request": "Return the grounded result after the completed factor evaluation.",
+      "expected": {
+        "outcome": "error",
+        "context_ids": ["request_scope"],
+        "retrieval_status": "not_used",
+        "retrieval_ids": [],
+        "required_steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ],
+        "run_status": "completed",
+        "final_status": "success",
+        "grounding": true,
+        "hitl_decision": "proceed",
+        "failure_stage": "outcome",
+        "failure_type": "wrong_final_outcome"
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope"]},
+        "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "success"}
+        ],
+        "retrieval": {"status": "not_used", "research_ids": []},
+        "research_run": {"status": "completed", "final_status": "success"},
+        "grounding": {"fully_grounded": true, "labels": ["supported"]},
+        "hitl": {"decision": "proceed"},
+        "outcome": {"status": "error"},
+        "failure": {"stage": "outcome", "type": "wrong_final_outcome"}
+      }
+    }
+  ]
+}
