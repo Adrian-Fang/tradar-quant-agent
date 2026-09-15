@@ -5,6 +5,7 @@ import json
 import unittest
 from unittest.mock import patch
 
+from agent.agent_eval import CASES, score_case
 from agent.agent import run_agent
 from agent.core.contracts import ToolResult
 
@@ -123,13 +124,34 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(hitl.calls, [])
 
     def test_hitl_needs_approval_stops_before_execution(self):
-        result, _, hitl, _, calls = self.run_with_tool(gate="needs_approval")
+        for decision in ("needs_approval", "blocked"):
+            with self.subTest(decision=decision):
+                result, _, hitl, _, calls = self.run_with_tool(gate=decision)
 
-        self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["observed"]["hitl"]["decision"], "needs_approval")
-        self.assertEqual(result["observed"]["outcome"]["status"], "needs_approval")
-        self.assertIsNone(result["research_run"])
-        self.assertEqual(len(hitl.calls), 1)
+                self.assertEqual(result["status"], "ok")
+                self.assertEqual(result["observed"]["hitl"]["decision"], decision)
+                self.assertEqual(result["observed"]["outcome"]["status"], decision)
+                self.assertIsNone(result["research_run"])
+                self.assertIsNone(result["observed"]["grounding"])
+                self.assertEqual(len(hitl.calls), 1)
+                self.assertEqual(calls, [])
+
+    def test_runtime_hitl_stop_scores_as_controlled_stop(self):
+        case = next(case for case in CASES if case["id"] == "hitl_needs_approval")
+        result, _, _, _, calls = self.run_with_tool(
+            planner_output={
+                "status": "ready",
+                "steps": case["expected"]["required_steps"],
+                "reason": "test",
+            },
+            gate="needs_approval",
+        )
+
+        row = score_case(case, result["observed"])
+        self.assertTrue(row["behavior_pass"])
+        self.assertTrue(row["diagnostic_pass"])
+        self.assertIsNone(row["failure_stage"])
+        self.assertIsNone(row["trajectory"])
         self.assertEqual(calls, [])
 
     def test_tool_error_is_execution_failure_inside_research_run(self):

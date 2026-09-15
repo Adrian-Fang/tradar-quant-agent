@@ -27,7 +27,7 @@ class AgentEvalTests(unittest.TestCase):
         self.assertEqual(meta["metrics"]["case_pass_rate"], 1.0)
         self.assertLess(meta["metrics"]["behavior_pass_rate"], 1.0)
         self.assertEqual(meta["metrics"]["diagnostic_pass_rate"], 1.0)
-        self.assertEqual(meta["metrics"]["trajectory_cases"], 11)
+        self.assertEqual(meta["metrics"]["trajectory_cases"], 10)
         self.assertEqual(meta["metrics"]["outcome_pass_rate"], 13 / 14)
         self.assertEqual(meta["metrics"]["failure_attribution_accuracy"], 1.0)
         self.assertEqual(meta["metrics"]["eval_failures"], 0)

@@ -328,9 +328,9 @@
         "required_steps": [
           {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
         ],
-        "run_status": "completed",
-        "final_status": "success",
-        "grounding": true,
+        "run_status": null,
+        "final_status": null,
+        "grounding": null,
         "hitl_decision": "needs_approval",
         "failure_stage": null,
         "failure_type": null
@@ -340,13 +340,11 @@
         "planning": {"status": "ready", "steps": [
           {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
         ]},
-        "steps": [
-          {"name": "evaluate_factor", "arguments": {"factor": "momentum_60d", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}, "status": "success"}
-        ],
+        "steps": [],
         "retrieval": {"status": "not_used", "research_ids": []},
         "orchestration": null,
-        "research_run": {"status": "completed", "final_status": "success"},
-        "grounding": {"fully_grounded": true, "labels": ["supported"]},
+        "research_run": null,
+        "grounding": null,
         "hitl": {"decision": "needs_approval"},
         "outcome": {"status": "needs_approval"}
       }
@@ -360,8 +358,10 @@
         "context_ids": ["request_scope"],
         "retrieval_status": "not_used",
         "retrieval_ids": [],
-        "required_steps": [],
-        "planning_status": null,
+        "required_steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ],
+        "planning_status": "ready",
         "run_status": null,
         "final_status": null,
         "grounding": null,
@@ -371,7 +371,9 @@
       },
       "observed": {
         "context": {"selected_ids": ["request_scope"]},
-        "planning": null,
+        "planning": {"status": "ready", "steps": [
+          {"name": "evaluate_factor", "arguments": {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"}}
+        ]},
         "steps": [],
         "retrieval": {"status": "not_used", "research_ids": []},
         "research_run": null,

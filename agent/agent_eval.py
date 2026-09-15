@@ -317,6 +317,13 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
         if expected_hitl is None
         else actual_hitl is not None and actual_hitl["decision"] == expected_hitl
     )
+    hitl_stop = (
+        actual_hitl is not None
+        and actual_hitl["decision"] in {"needs_approval", "blocked"}
+        and not observed["steps"]
+        and observed["research_run"] is None
+        and observed["grounding"] is None
+    )
     expected_run_status = expected.get("run_status")
     expected_final_status = expected.get("final_status")
     actual_run = observed["research_run"]
@@ -349,7 +356,7 @@ def score_case(case: dict[str, Any], observed: dict[str, Any], repeat: int = 1) 
             )
         ),
         "execution": (
-            (not expected_steps or execution_reached)
+            (hitl_stop or not expected_steps or execution_reached)
             and not any(step["status"] == "error" for step in observed["steps"])
         ),
         "state": state_matches,
