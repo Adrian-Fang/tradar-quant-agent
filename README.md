@@ -40,15 +40,18 @@ Tradar 聚焦于量化研究流程的 Agent 化，不试图覆盖投资决策、
 | 能力 | 状态 |
 | --- | --- |
 | Tool Calling 与 fixture eval | 已落地 |
-| ResearchRun State Lifecycle | 已落地 |
-| Deterministic Multi-step Executor | 已落地 |
+| ResearchRun State Lifecycle 与 Deterministic Multi-step Executor | 已落地 |
 | Context Selection / Compaction / Construction 与 eval | 已落地 |
 | Research Record corpus | 已落地 |
-| Lexical / Semantic Retrieval（含 CJK character bigram） | 已落地 |
-| Retrieval Eval（baseline / semantic / abstention） | 已落地 |
-| Relevance Verification Eval | 已落地 |
-| Verified Semantic Retrieval runtime | 已落地 |
+| Lexical / Semantic Retrieval（含 CJK character bigram）与 Retrieval Eval（baseline / semantic / abstention） | 已落地 |
+| Relevance Verification Eval 与 Verified Semantic Retrieval runtime | 已落地 |
+| Planning contract/eval、runtime planner 与 planner → executor integration | 已落地 |
+| Grounding contract/eval 与 runtime verifier | 已落地 |
+| Memory write/update/ignore decision eval、append-only lifecycle store、recall eval 与 runtime recall | 已落地 |
+| HITL approval gate eval、runtime gate 与 minimal approval lifecycle | 已落地 |
 | `research/` quantitative engine、factor analysis 与 backtest | 已落地 |
+
+这些是可独立调用和评估的组件，不等于整条 end-to-end autonomous loop 已接通：memory recall 目前不会自动注入 context，HITL approval lifecycle 也尚未接 executor resume 或 tool interception。项目仍定位为可复现、可评估、可追溯的人机协同研究系统。
 
 ## 架构快照 / Architecture Snapshot
 
@@ -57,9 +60,13 @@ User Question
      │
      ▼
 agent/                         resources/                 tests/
-├── core/                       ├── eval/                  └── regression tests
-├── retrieval/                  ├── prompts/
-├── context/                    └── knowledge/
+├── core/                      ├── eval/                  └── regression tests
+├── retrieval/                 ├── prompts/
+├── context/                   └── knowledge/
+├── planning/
+├── grounding/
+├── memory/
+├── hitl/
 └── tools/
      │  harness / orchestration
      ▼
@@ -76,9 +83,13 @@ engine
 tradar/
 ├── agent/
 │   ├── core/               # Contracts、provider adapters、resource loaders
-│   ├── tools/              # Tool schemas、orchestration、sequential executor、tools、Tool Calling eval
-│   ├── context/            # Context selection, compaction, construction, and Eval runner
-│   └── retrieval/          # Research Record loader、lexical/semantic retrieval、relevance verification
+│   ├── tools/              # Tool schemas、calling、research tools、executor 与 Tool Calling eval
+│   ├── context/            # Selector、compactor、builder 与 Context Eval runner
+│   ├── retrieval/          # Research Record loader、lexical/semantic retrieval、verification 与 eval
+│   ├── planning/           # Validated planner、orchestrator 与 Planning eval
+│   ├── grounding/          # Claim ↔ Evidence verifier 与 Grounding eval
+│   ├── memory/             # Decision、atomic store、recall 与对应 eval
+│   └── hitl/               # Approval gate、approval lifecycle 与 HITL eval
 ├── research/               # 唯一的量化研究引擎
 │   ├── panel.py            # 面板数据与 universe
 │   ├── factor_analyzer.py  # 因子分析
@@ -98,10 +109,7 @@ tradar/
 
 ## Roadmap
 
-- Planning / Trajectory
-- Grounding
-- Memory
-- Human-in-the-loop
+- Context → Planning → Execution → Grounding / Memory / HITL 的端到端整合
 - Whole-system Agent Eval
 
 ## 快速开始
@@ -121,6 +129,11 @@ python -m agent.tools.eval --provider fixture --repeats 1
 python -m agent.context.eval --provider fixture --repeats 1
 python -m agent.retrieval.eval
 python -m agent.retrieval.relevance_verifier_eval --provider fixture --repeats 1
+python -m agent.planning.eval --provider fixture --repeats 1
+python -m agent.grounding.eval --provider fixture --repeats 1
+python -m agent.memory.eval --provider fixture --repeats 1
+python -m agent.memory.recall_eval --provider fixture --repeats 1
+python -m agent.hitl.eval --provider fixture --repeats 1
 ```
 
 需要模型时，按 provider 配置对应 API key 后运行同一个 capability runner；远程 eval 不属于测试套件。

@@ -26,9 +26,13 @@ Tradar 是一个量化研究、策略验证与生产信号平台，并正在逐�
 策略研究目录职责：
 
 - `agent/core/`：共享 Tool contracts、ResearchRun、provider adapters 与资源加载。
-- `agent/tools/`：当前真实存在的 Tool Calling capability、sequential executor、production tools 与其 eval runner。
-- `agent/context/`：Context selection、budget/compaction、construction 与 Context Engineering eval runner。
-- `agent/retrieval/`：Research Record loader、lexical/semantic retrieval，以及 relevance verification runtime/eval。
+- `agent/tools/`：Tool Calling 的 calling/schema glue、research tool wrappers、sequential executor 与 eval runner。
+- `agent/context/`：context selector、compactor、builder 与 Context Engineering eval runner。
+- `agent/retrieval/`：Research Record loader、lexical/semantic retrieval、relevance verification runtime 与 eval。
+- `agent/planning/`：validated planner、plan-once orchestrator 与 Planning eval。
+- `agent/grounding/`：Claim ↔ Evidence grounding verifier 与 Grounding eval。
+- `agent/memory/`：write/update/ignore decision、append-only store、recall runtime 与 eval。
+- `agent/hitl/`：approval gate、minimal approval lifecycle 与 HITL eval。
 - `research/`：唯一 canonical quantitative research engine。
 - `scripts/`：具体研究实验与一次性研究入口。
 - `utils/`：数据加载与通用基础设施。
@@ -48,7 +52,11 @@ Research Records
   → Construction
 ```
 
+这条链路描述知识与 context 的处理边界，不代表当前已经接通完整的端到端运行时。
+
 Semantic similarity 只是 retrieval-stage signal，不等于 support。retrieval score 不应作为 verifier 输入；verifier 只判断 `query ↔ record` 是否有直接支持。
+
+上述能力目前以可独立调用、可独立评估的组件存在，不表示已经组成单一生产 pipeline；memory recall 不会自动注入 context，HITL approval lifecycle 也未接 executor resume 或 tool interception。
 
 
 ## 3. 如何开展新的量化研究
@@ -230,15 +238,13 @@ Tradar 正在逐步把原本依赖研究人员和脚本完成的流程显式化�
 
 `agent/tools/` 中的 Tool 是稳定的业务能力 contract，而不是把 `research/` 中每个 Python 函数机械地暴露成 Tool。
 
-当前和计划中的核心 Tool 包括：
+当前稳定的核心 Tool 包括：
 
 - `inspect_universe`
 - `evaluate_factor`
 - `run_backtest`
-- `validate_research_run`
-- `compare_runs`
 
-后续还会增加 research memory、event study 和 strategy candidate 等能力。如果已有 Agent Tool 能完整覆盖任务，优先调用 Tool。如果当前 Tool 还不能覆盖新的探索性研究，可以继续采用：`研究问题 → scripts 实验 → research engine` 研究成熟后，再考虑是否值得沉淀为新的稳定 Agent Tool。不要为了“Agent 化”而把所有实验代码都包装成 Tool。
+如果已有 Agent Tool 能完整覆盖任务，优先调用 Tool。如果当前 Tool 还不能覆盖新的探索性研究，可以继续采用：`研究问题 → scripts 实验 → research engine` 研究成熟后，再考虑是否值得沉淀为新的稳定 Agent Tool。不要为了“Agent 化”而把所有实验代码都包装成 Tool。
 
 当前 capability eval runner：
 
@@ -247,6 +253,11 @@ python -m agent.tools.eval --provider fixture --repeats 1
 python -m agent.context.eval --provider fixture --repeats 1
 python -m agent.retrieval.eval
 python -m agent.retrieval.relevance_verifier_eval --provider fixture --repeats 1
+python -m agent.planning.eval --provider fixture --repeats 1
+python -m agent.grounding.eval --provider fixture --repeats 1
+python -m agent.memory.eval --provider fixture --repeats 1
+python -m agent.memory.recall_eval --provider fixture --repeats 1
+python -m agent.hitl.eval --provider fixture --repeats 1
 ```
 
 `resources/eval/` 中的 JSON 是 dataset，`agent/*/eval.py` 是 runner，`agent/tools/research.py` 是 production capability。三者保持分离；远程 DeepSeek/OpenAI eval 由调用者自行运行。
