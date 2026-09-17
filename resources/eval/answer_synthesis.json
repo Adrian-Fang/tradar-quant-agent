@@ -1,0 +1,163 @@
+{
+  "cases": [
+    {
+      "id": "single_transaction_cost_fact",
+      "slice": "single_evidence",
+      "user_request": "What are the canonical default buy and sell transaction costs in the research engine?",
+      "evidence": [
+        {"id": "e1", "text": "The canonical engine charges 10 bp on buys and 15 bp on sells."},
+        {"id": "e2", "text": "The High52 standalone factor was rejected."}
+      ],
+      "expected": {
+        "status": "success",
+        "evidence_ids": ["e1"],
+        "required_content": [["10 bp", "10bp"], ["15 bp", "15bp"], ["buy", "buys"], ["sell", "sells"]],
+        "forbidden_content": [["25 bp", "25bp"]],
+        "fixture_answer": "The canonical defaults are 10 bp for buys and 15 bp for sells."
+      }
+    },
+    {
+      "id": "relative_reversal_synthesis",
+      "slice": "multi_evidence",
+      "user_request": "What does the research conclude about Excess20 and stable independent alpha?",
+      "evidence": [
+        {"id": "e1", "text": "Excess20 shows short-term relative reversal, while the apparent relative-strength signals are highly redundant."},
+        {"id": "e2", "text": "Conclusion: inconclusive. The evidence does not support stable independent alpha or upgrading the structure into a strategy."}
+      ],
+      "expected": {
+        "status": "success",
+        "evidence_ids": ["e1", "e2"],
+        "required_content": [["Excess20"], ["short-term relative reversal", "relative reversal"], ["inconclusive"], ["not support", "does not support"]],
+        "forbidden_content": [],
+        "fixture_answer": "The research finds short-term relative reversal in Excess20, but the evidence is inconclusive and does not support stable independent alpha."
+      }
+    },
+    {
+      "id": "quantitative_date_fidelity",
+      "slice": "numeric_date",
+      "user_request": "In the 2026-09-01 engine check, what buy/sell costs and round-trip cost were recorded?",
+      "evidence": [
+        {"id": "e1", "text": "Date: 2026-09-01. Smoke output: BUY_COST_BP=10.0000, SELL_COST_BP=15.0000, ROUND_TRIP_COST_BP=24.9750."},
+        {"id": "e2", "text": "The test retained explicit script and YAML overrides."}
+      ],
+      "expected": {
+        "status": "success",
+        "evidence_ids": ["e1"],
+        "required_content": [["2026-09-01"], ["10.0000"], ["15.0000"], ["24.9750"]],
+        "forbidden_content": [["25.0000"], ["15.0000 buy"]],
+        "fixture_answer": "On 2026-09-01, the recorded costs were 10.0000 bp for buys, 15.0000 bp for sells, and 24.9750 bp round trip."
+      }
+    },
+    {
+      "id": "irrelevant_evidence_exclusion",
+      "slice": "irrelevant_exclusion",
+      "user_request": "What does the research say about default buy and sell costs?",
+      "evidence": [
+        {"id": "e1", "text": "The framework defaults to 10 bp buy cost and 15 bp sell cost, charged by actual trade direction."},
+        {"id": "e2", "text": "HIGH52 near-high tail penalty was rejected as a standalone positive momentum factor."}
+      ],
+      "expected": {
+        "status": "success",
+        "evidence_ids": ["e1"],
+        "required_content": [["10 bp", "10bp"], ["15 bp", "15bp"]],
+        "forbidden_content": [["HIGH52"], ["near-high"], ["tail penalty"]],
+        "fixture_answer": "The default costs are 10 bp for buys and 15 bp for sells."
+      }
+    },
+    {
+      "id": "partial_evidence_narrow_answer",
+      "slice": "narrow_supported_answer",
+      "user_request": "Does the High52 study establish an executable short strategy?",
+      "evidence": [
+        {"id": "e1", "text": "The study reports a near-high tail penalty, but explicitly says this is not an executable short strategy; borrowing, costs, and short feasibility were not validated."},
+        {"id": "e2", "text": "The raw factor direction was rejected as standalone positive momentum."}
+      ],
+      "expected": {
+        "status": "success",
+        "evidence_ids": ["e1"],
+        "required_content": [["tail penalty"], ["not an executable short strategy", "not validated"]],
+        "forbidden_content": [],
+        "fixture_answer": "The evidence reports a near-high tail penalty, but it does not establish an executable short strategy because short feasibility was not validated."
+      }
+    },
+    {
+      "id": "insufficient_future_extrapolation",
+      "slice": "insufficient_evidence",
+      "user_request": "Does this research prove the High52 effect will remain profitable throughout 2027?",
+      "evidence": [
+        {"id": "e1", "text": "The record covers data through 2026-07-31 and says the factor is rejected as standalone positive momentum; it does not establish future performance."}
+      ],
+      "expected": {
+        "status": "insufficient_evidence",
+        "evidence_ids": ["e1"],
+        "required_content": [["insufficient evidence", "not enough evidence", "does not prove"], ["2026-07-31"], ["does not establish", "cannot establish", "does not prove"]],
+        "forbidden_content": [],
+        "fixture_answer": "Insufficient evidence: the record ends at 2026-07-31 and does not establish the requested future performance."
+      }
+    },
+    {
+      "id": "breakout_multi_evidence_conclusion",
+      "slice": "multi_evidence",
+      "user_request": "Summarize whether the volume-confirmed breakout had a stable edge and whether it carried to next-open execution.",
+      "evidence": [
+        {"id": "e1", "text": "The volume-confirmed platform breakout had D+1 open H20 of +0.28% in the 1.5-2x bucket, but >=3x was -0.90%; the volume buckets were not monotonic."},
+        {"id": "e2", "text": "Conclusion: rejected. The D0-close edge did not reliably transfer to next-open and no stable incremental edge was found."}
+      ],
+      "expected": {
+        "status": "success",
+        "evidence_ids": ["e1", "e2"],
+        "required_content": [["not monotonic", "no stable"], ["next-open", "next open"], ["rejected"]],
+        "forbidden_content": [],
+        "fixture_answer": "The breakout study was rejected: its volume buckets were not monotonic and the D0-close effect did not reliably transfer to next-open execution."
+      }
+    },
+    {
+      "id": "breakout_numeric_direction_fidelity",
+      "slice": "numeric_fidelity",
+      "user_request": "What were the reported D+1-open H20 results for the 1.5-2x and >=3x volume buckets?",
+      "evidence": [
+        {"id": "e1", "text": "Full-sample D+1-open H20 was +0.28% for the 1.5-2x volume bucket and -0.90% for the >=3x bucket."},
+        {"id": "e2", "text": "The event study also reported a D0-close H20 result of -0.24% for all events."}
+      ],
+      "expected": {
+        "status": "success",
+        "evidence_ids": ["e1"],
+        "required_content": [["1.5-2x"], [">=3x"], ["+0.28%"], ["-0.90%"]],
+        "forbidden_content": [["-0.28%"], ["+0.90%"]],
+        "fixture_answer": "The D+1-open H20 result was +0.28% for 1.5-2x and -0.90% for >=3x."
+      }
+    },
+    {
+      "id": "sequoia_research_fact",
+      "slice": "single_evidence",
+      "user_request": "What is the conclusion of the source-exact scanner reproduction?",
+      "evidence": [
+        {"id": "e1", "text": "The source-exact Sequoia-X scanner reproduction was rejected: no scanner showed a stable edge across development and 2026 phases."},
+        {"id": "e2", "text": "The selector CLI remains available for date-based manual review."}
+      ],
+      "expected": {
+        "status": "success",
+        "evidence_ids": ["e1"],
+        "required_content": [["rejected"], ["no scanner", "no stable edge"], ["stable edge"]],
+        "forbidden_content": [],
+        "fixture_answer": "The source-exact scanner reproduction was rejected because no scanner showed a stable edge across the tested phases."
+      }
+    },
+    {
+      "id": "insufficient_intraday_vwap_claim",
+      "slice": "insufficient_evidence",
+      "user_request": "Can the supplied material establish a causal benefit for a new intraday VWAP strategy?",
+      "evidence": [
+        {"id": "e1", "text": "The supplied records discuss event studies, factor diagnostics, and transaction-cost handling, but do not test an intraday VWAP strategy."},
+        {"id": "e2", "text": "The research engine supports next-open execution for the documented studies."}
+      ],
+      "expected": {
+        "status": "insufficient_evidence",
+        "evidence_ids": ["e1"],
+        "required_content": [["insufficient evidence", "cannot establish"], ["not test", "not tested"]],
+        "forbidden_content": [],
+        "fixture_answer": "Insufficient evidence: the supplied records do not test an intraday VWAP strategy, so they cannot establish its causal benefit."
+      }
+    }
+  ]
+}
