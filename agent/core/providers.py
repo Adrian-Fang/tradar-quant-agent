@@ -183,10 +183,14 @@ class DeepSeekChatClient:
                 "arguments": getattr(function, "arguments", "{}"),
                 "call_id": getattr(call, "id", None),
             })
-        return {
+        normalized = {
             "output": output,
             "output_text": getattr(message, "content", "") or "",
         }
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            normalized["usage"] = usage
+        return normalized
 
 
 __all__ = [

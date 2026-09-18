@@ -10,6 +10,8 @@ from .answer.synthesizer import synthesize_answer
 from .context.builder import construct_context
 from .context.selector import select_context
 from .core.contracts import ResearchRun
+from .core.safety import check_request_safety
+from .core.telemetry import RunTelemetry, TelemetryClient
 from .grounding.verifier import verify_answer_grounding
 from .hitl.gate import gate_action
 from .planning.planner import plan_request
@@ -122,6 +124,8 @@ def _finish(
     answer: str | None = None,
     evidence: list[dict[str, str]] | None = None,
     synthesis: dict[str, Any] | None = None,
+    safety: dict[str, Any] | None = None,
+    telemetry: RunTelemetry | None = None,
 ) -> dict[str, Any]:
     observed = {
         "context": {"selected_ids": context_ids},
@@ -148,6 +152,8 @@ def _finish(
         "answer": answer,
         "evidence": evidence,
         "synthesis": synthesis,
+        "safety": safety,
+        "telemetry": telemetry.envelope() if telemetry is not None else None,
         "error_type": error_type,
         "error_stage": error_stage,
         "error": error,
@@ -181,6 +187,28 @@ def run_agent(
     if not isinstance(user_request, str) or not user_request.strip():
         raise ValueError("user_request must be a non-empty string")
 
+    telemetry = RunTelemetry()
+    action = proposed_action or {
+        "description": "Execute the validated research plan.",
+        "environment": "local",
+        "reversible": True,
+    }
+    boundaries = product_boundaries or []
+    safety = check_request_safety(user_request, action, boundaries)
+    if safety["status"] == "blocked":
+        return _finish(
+            context_ids=["request_scope"],
+            planning=None,
+            steps=[],
+            retrieval={"status": "not_used", "research_ids": []},
+            research_run=None,
+            grounding=None,
+            hitl=None,
+            outcome="blocked",
+            safety=safety,
+            telemetry=telemetry,
+        )
+
     items = [
         {"id": "request_scope", "kind": "current_instruction", "text": user_request},
         *(context_items or []),
@@ -194,7 +222,12 @@ def run_agent(
             raise ValueError("retrieval_client is required with semantic_embedder")
         retrieval_result = retrieve_verified(
             user_request,
-            client=retrieval_client,
+            client=TelemetryClient(
+                retrieval_client,
+                telemetry,
+                stage="retrieval_verifier",
+                model=model,
+            ),
             model=model,
             candidate_limit=candidate_limit,
             market=market,
@@ -224,6 +257,8 @@ def run_agent(
                 status="error",
                 error_type=error.get("error_type", "retrieval_error"),
                 error=error.get("error", "retrieval failed"),
+                safety=safety,
+                telemetry=telemetry,
             )
         if retrieval_result["status"] == "abstain":
             return _finish(
@@ -236,6 +271,8 @@ def run_agent(
                 hitl=None,
                 outcome="abstain",
                 retrieval_result=retrieval_result,
+                safety=safety,
+                telemetry=telemetry,
             )
         for result in retrieval_result["results"]:
             item = {
@@ -253,7 +290,11 @@ def run_agent(
         user_request,
         {"status": "ok", "context": selected},
     )
-    planned = plan_request(construction["input"], client=planner_client, model=model)
+    planned = plan_request(
+        construction["input"],
+        client=TelemetryClient(planner_client, telemetry, stage="planning", model=model),
+        model=model,
+    )
     if planned["status"] == "error":
         planning = {
             "status": "error",
@@ -272,6 +313,8 @@ def run_agent(
             status="error",
             error_type=planned["error_type"],
             error=planned["error"],
+            safety=safety,
+            telemetry=telemetry,
         )
 
     plan = planned["plan"]
@@ -288,20 +331,18 @@ def run_agent(
             outcome=plan["status"],
             plan=plan,
             retrieval_result=retrieval_result,
+            safety=safety,
+            telemetry=telemetry,
         )
 
     if hitl_client is None:
         raise ValueError("hitl_client is required for a ready plan")
     gate = gate_action(
         user_request,
-        proposed_action or {
-            "description": "Execute the validated research plan.",
-            "environment": "local",
-            "reversible": True,
-        },
+        action,
         existing_approval or {"approved": False, "scope": None},
-        product_boundaries or [],
-        client=hitl_client,
+        boundaries,
+        client=TelemetryClient(hitl_client, telemetry, stage="hitl", model=model),
         model=model,
     )
     if gate["status"] == "error":
@@ -319,6 +360,8 @@ def run_agent(
             status="error",
             error_type=gate["error_type"],
             error=gate["error"],
+            safety=safety,
+            telemetry=telemetry,
         )
 
     hitl_trace = {"decision": gate["decision"]}
@@ -334,6 +377,8 @@ def run_agent(
             outcome=gate["decision"],
             plan=plan,
             retrieval_result=retrieval_result,
+            safety=safety,
+            telemetry=telemetry,
         )
 
     run = ResearchRun(
@@ -359,6 +404,8 @@ def run_agent(
             error_type="orchestration_error",
             error=f"{type(exc).__name__}: {exc}",
             orchestration={"status": "error", "type": "orchestration_error"},
+            safety=safety,
+            telemetry=telemetry,
         )
 
     steps = _steps(run)
@@ -374,6 +421,8 @@ def run_agent(
             outcome="error",
             plan=plan,
             retrieval_result=retrieval_result,
+            safety=safety,
+            telemetry=telemetry,
         )
 
     bound_evidence = tool_results_to_evidence(tool_results)
@@ -383,7 +432,12 @@ def run_agent(
         synthesis_result = synthesize_answer(
             user_request,
             bound_evidence,
-            client=synthesis_client,
+            client=TelemetryClient(
+                synthesis_client,
+                telemetry,
+                stage="synthesis",
+                model=model,
+            ),
             model=model,
         )
         if synthesis_result["status"] == "error":
@@ -403,6 +457,8 @@ def run_agent(
                 error_stage="synthesis",
                 error=synthesis_result["error"],
                 evidence=bound_evidence,
+                safety=safety,
+                telemetry=telemetry,
             )
         synthesis = synthesis_result["result"]
         synthesized_answer = synthesis["answer"]
@@ -423,6 +479,8 @@ def run_agent(
                 answer=synthesized_answer,
                 evidence=bound_evidence,
                 synthesis=synthesis,
+                safety=safety,
+                telemetry=telemetry,
             )
     elif answer is None and evidence is None:
         raise ValueError("synthesis_client is required after successful execution")
@@ -436,7 +494,15 @@ def run_agent(
         if grounding_client is None or evidence is None:
             raise ValueError("grounding_client and evidence are required with answer")
         grounding_result = verify_answer_grounding(
-            answer, evidence, client=grounding_client, model=model,
+            answer,
+            evidence,
+            client=TelemetryClient(
+                grounding_client,
+                telemetry,
+                stage="grounding",
+                model=model,
+            ),
+            model=model,
         )
         if grounding_result["status"] == "error":
             return _finish(
@@ -457,6 +523,8 @@ def run_agent(
                 answer=answer,
                 evidence=evidence,
                 synthesis=synthesis,
+                safety=safety,
+                telemetry=telemetry,
             )
         grounding = grounding_result["assessment"]
         grounding_trace = {
@@ -484,6 +552,8 @@ def run_agent(
         answer=answer,
         evidence=evidence,
         synthesis=synthesis,
+        safety=safety,
+        telemetry=telemetry,
     )
 
 
