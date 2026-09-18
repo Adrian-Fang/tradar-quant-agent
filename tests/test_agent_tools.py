@@ -155,6 +155,11 @@ class AgentToolContractTests(unittest.TestCase):
         expected_ic = expected_analyzer.calc_ic(period=1, method="spearman").mean()
         self.assertAlmostEqual(result.result["ic"]["1"]["ic_mean"], expected_ic)
         self.assertIn("groups", result.result)
+        methodology = result.result["methodology"]
+        self.assertEqual(methodology["ic_method"], "spearman")
+        self.assertIn("spearman correlation", methodology["ic_definition"])
+        self.assertIn("inverse rank association", methodology["ic_interpretation"])
+        self.assertIn("not causality or a recommendation", methodology["ic_interpretation"])
         json.loads(result.to_json())
 
     def test_evaluate_factor_errors_are_structured(self) -> None:

@@ -502,6 +502,24 @@ def evaluate_factor(
     except (TypeError, ValueError) as exc:
         return failure("invalid_eval_args", f"invalid factor definition: {exc}", normalized_args=normalized_args)
 
+    ic_interpretation = {
+        "spearman": (
+            "Negative IC indicates an inverse rank association: higher factor "
+            "values are associated with lower forward returns. This is "
+            "descriptive association, not causality or a recommendation."
+        ),
+        "pearson": (
+            "Negative IC indicates a negative linear association between factor "
+            "values and forward returns. This is descriptive association, not "
+            "causality or a recommendation."
+        ),
+        "kendall": (
+            "Negative IC indicates inverse rank concordance between factor "
+            "values and forward returns. This is descriptive association, not "
+            "causality or a recommendation."
+        ),
+    }[method]
+
     try:
         required_warmup = required_warmup_days([definition])
         effective_warmup = max(warmup_days, required_warmup)
@@ -602,6 +620,14 @@ def evaluate_factor(
                     "coverage_median": _scalar(coverage_pct.median()),
                     "coverage_min": _scalar(coverage_pct.min()),
                     "coverage_max": _scalar(coverage_pct.max()),
+                },
+                "methodology": {
+                    "ic_method": method,
+                    "ic_definition": (
+                        f"Configured IC is the {method} correlation between "
+                        "factor values and forward returns."
+                    ),
+                    "ic_interpretation": ic_interpretation,
                 },
                 "ic": ic,
                 "groups": groups,
