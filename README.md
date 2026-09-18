@@ -6,12 +6,14 @@ Tradar 是一个正在建设中的 Agentic Quantitative Research Platform。目�
 
 ```text
 User Question
-  → Retrieval / Context Construction
-  → Planning / Tool Calling
-  → research engine
-  → Validation / Interpretation
-  → Memory / Human Review
-  → Production
+  → Safety / Context / Retrieval
+  → Planning
+  → HITL
+  → Deterministic Execution / ResearchRun
+  → Bounded ToolResult Evidence
+  → Answer Synthesis
+  → Cited-Evidence Grounding
+  → Final Answer + Telemetry
 ```
 
 `research/` 是 deterministic quantitative engine；`agent/` 是负责编排、能力调用和评估的 harness/orchestration 层。
@@ -49,9 +51,15 @@ Tradar 聚焦于量化研究流程的 Agent 化，不试图覆盖投资决策、
 | Grounding contract/eval 与 runtime verifier | 已落地 |
 | Memory write/update/ignore decision eval、append-only lifecycle store、recall eval 与 runtime recall | 已落地 |
 | HITL approval gate eval、runtime gate 与 minimal approval lifecycle | 已落地 |
+| AE-09 whole-system Agent runtime/eval 与 failure attribution | 已落地 |
+| AE-10 Answer synthesis 与实际 ToolResult evidence output binding | 已落地 |
+| AE-11 provider-call telemetry 与 run-level observability | 已落地 |
+| AE-12 runtime safety boundary 与 indirect-injection quarantine | 已落地 |
 | `research/` quantitative engine、factor analysis 与 backtest | 已落地 |
 
-这些是可独立调用和评估的组件，不等于整条 end-to-end autonomous loop 已接通：memory recall 目前不会自动注入 context，HITL approval lifecycle 也尚未接 executor resume 或 tool interception。项目仍定位为可复现、可评估、可追溯的人机协同研究系统。
+`agent/agent.py::run_agent` 已把稳定 Tool 的正常请求路径接通：请求经过 safety/context/retrieval、planning、HITL、确定性执行与 `ResearchRun`，再由实际 `ToolResult` 形成有界 evidence，完成 answer synthesis、cited-evidence grounding，并返回最终答案与 telemetry。这是可验证的 Agent runtime，不等于 fully autonomous production loop：context compactor 目前未接入 `run_agent()`，memory recall 不会自动注入 context，HITL approval lifecycle 尚未接 executor resume 或 tool interception，approval resume/replan 仍未实现；调用方若不提供具体 action，HITL 默认使用 generic proposed action。
+
+Telemetry 记录 provider/model/stage、provider 返回的 usage tokens、provider latency 与完整 runtime wall-clock，并使用版本化配置估算成本，同时保留 per-stage、failure/terminal attribution。Safety 将 system/product rules 视为可信指令，将 user/retrieval/tool 内容视为不可信数据；明显不安全请求和 active indirect injection 会被确定性 block/quarantine，destructive action 仍经过 HITL。
 
 ## 架构快照 / Architecture Snapshot
 
@@ -60,9 +68,12 @@ User Question
      │
      ▼
 agent/                         resources/                 tests/
-├── core/                      ├── eval/                  └── regression tests
-├── retrieval/                 ├── prompts/
-├── context/                   └── knowledge/
+├── agent.py                   ├── eval/                  └── regression tests
+├── agent_eval.py              ├── prompts/
+├── core/                      └── knowledge/
+├── answer/
+├── retrieval/
+├── context/
 ├── planning/
 ├── grounding/
 ├── memory/
@@ -82,7 +93,10 @@ engine
 ```text
 tradar/
 ├── agent/
-│   ├── core/               # Contracts、provider adapters、resource loaders
+│   ├── agent.py            # 集成 runtime：request → final answer + telemetry
+│   ├── agent_eval.py       # AE-09 whole-system deterministic eval
+│   ├── core/               # Contracts、providers、resources、telemetry、safety
+│   ├── answer/             # Answer synthesis 与 eval
 │   ├── tools/              # Tool schemas、calling、research tools、executor 与 Tool Calling eval
 │   ├── context/            # Selector、compactor、builder 与 Context Eval runner
 │   ├── retrieval/          # Research Record loader、lexical/semantic retrieval、verification 与 eval
@@ -109,8 +123,8 @@ tradar/
 
 ## Roadmap
 
-- Context → Planning → Execution → Grounding / Memory / HITL 的端到端整合
-- Whole-system Agent Eval
+- Thin runnable entrypoint + a few real-provider smoke runs
+- 根据 smoke 结果决定是否接入 compactor、推导 truthful HITL action、增加 approval resume/replan，或整合 memory
 
 ## 快速开始
 
@@ -129,14 +143,16 @@ python -m agent.tools.eval --provider fixture --repeats 1
 python -m agent.context.eval --provider fixture --repeats 1
 python -m agent.retrieval.eval
 python -m agent.retrieval.relevance_verifier_eval --provider fixture --repeats 1
+python -m agent.answer.eval --provider fixture --repeats 1
 python -m agent.planning.eval --provider fixture --repeats 1
 python -m agent.grounding.eval --provider fixture --repeats 1
 python -m agent.memory.eval --provider fixture --repeats 1
 python -m agent.memory.recall_eval --provider fixture --repeats 1
 python -m agent.hitl.eval --provider fixture --repeats 1
+python -m agent.agent_eval --provider fixture --repeats 1
 ```
 
-需要模型时，按 provider 配置对应 API key 后运行同一个 capability runner；远程 eval 不属于测试套件。
+`agent/agent.py` 目前提供 runtime callable `run_agent`，尚无 thin CLI/runtime entrypoint；`agent.agent_eval` 是现有 whole-system fixture evaluator。需要模型时，按 provider 配置对应 API key 后运行支持该 provider 的 capability runner；远程 eval 不属于测试套件。
 
 测试套件：
 
