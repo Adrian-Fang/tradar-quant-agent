@@ -98,6 +98,13 @@ class AnswerSynthesisTests(unittest.TestCase):
         body = json.loads(client.calls[0]["input"])
         self.assertEqual(set(body), {"user_request", "evidence"})
 
+    def test_prompt_rejects_unsupported_qualitative_and_recommendation_overreach(self):
+        prompt = _prompt(CASES[0])["instructions"]
+        self.assertIn("Separate directly observed facts from interpretation", prompt)
+        self.assertIn("sufficient, large, small, strong, or weak", prompt)
+        self.assertIn("should use, avoid, or use", prompt)
+        self.assertIn("does not establish causality", prompt)
+
     def test_evidence_ids_are_minimal_but_keep_required_multi_evidence(self):
         insufficient = next(
             case for case in CASES if case["id"] == "insufficient_intraday_vwap_claim"
