@@ -172,6 +172,7 @@ class AgentOutputBindingTests(unittest.TestCase):
                 result["error_type"],
                 "provider_error" if client.error else "malformed_response",
             )
+            self.assertEqual(result["telemetry"]["summary"]["failure_stage"], "synthesis")
             self.assertIsNone(result["grounding"])
 
     def test_grounding_blocks_after_synthesis(self):

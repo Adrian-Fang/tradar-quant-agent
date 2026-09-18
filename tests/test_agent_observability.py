@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
+from time import sleep
 import unittest
 from unittest.mock import patch
 
 from agent.agent import run_agent
 from agent.core.contracts import ToolResult
-from agent.core.telemetry import RunTelemetry, TelemetryClient, estimate_cost
+from agent.core.telemetry import (
+    BEIJING_TIMEZONE,
+    RunTelemetry,
+    TelemetryClient,
+    estimate_cost,
+)
 
 
 def response(value, usage=None):
@@ -50,12 +57,14 @@ class ObservabilityTests(unittest.TestCase):
     def test_usage_extraction_and_unknown_cost(self):
         telemetry = RunTelemetry()
         client = Client("{}", self.USAGE)
-        TelemetryClient(client, telemetry, stage="planning", model="fixture-model").create({
+        payload = {
             "model": "fixture-model",
             "instructions": "return JSON",
             "input": "request",
-        })
+        }
+        TelemetryClient(client, telemetry, stage="planning", model="fixture-model").create(payload)
 
+        self.assertEqual(client.calls, [payload])
         call = telemetry.envelope()["calls"][0]
         self.assertEqual(call["input_tokens"], 10)
         self.assertEqual(call["output_tokens"], 4)
@@ -63,6 +72,71 @@ class ObservabilityTests(unittest.TestCase):
         self.assertEqual(call["reasoning_tokens"], 1)
         self.assertIsNone(call["estimated_cost"])
         self.assertIsNone(estimate_cost("unknown", "model", 10, 4))
+        self.assertIsNone(estimate_cost("openai", "gpt-5", 10, 4))
+        self.assertEqual(estimate_cost("openai", "gpt-5", 10, 4, 2), 0.00005025)
+        self.assertIsNone(estimate_cost("deepseek", "unknown", 10, 4, 2))
+
+    def test_deepseek_pricing_uses_beijing_peak_and_cache_tiers(self):
+        peak = datetime(2026, 9, 18, 10, tzinfo=BEIJING_TIMEZONE)
+        idle = datetime(2026, 9, 18, 13, tzinfo=BEIJING_TIMEZONE)
+        self.assertEqual(
+            estimate_cost("deepseek", "deepseek-flash", 1_000_000, 1_000_000, 1_000_000, peak),
+            8.04,
+        )
+        self.assertEqual(
+            estimate_cost("deepseek", "deepseek-v4-flash", 1_000_000, 1_000_000, 0, idle),
+            5.0,
+        )
+        self.assertEqual(
+            estimate_cost("deepseek", "deepseek-v4-flash-vision-exp", 1_000_000, 1_000_000, 1_000_000, idle),
+            4.02,
+        )
+        self.assertEqual(
+            estimate_cost("deepseek", "deepseek-v4-pro", 1_000_000, 1_000_000, 0, peak),
+            36.0,
+        )
+
+    def test_wall_clock_includes_tool_time_not_provider_latency(self):
+        planner = Client({
+            "status": "ready",
+            "steps": [research_step()],
+            "reason": "fixture",
+        })
+        hitl = Client({"decision": "proceed", "approval_request": None, "reason": "fixture"})
+        synthesis = Client({
+            "status": "success",
+            "answer": "The inspected count was 12.",
+            "evidence_ids": ["step-1-inspect_universe"],
+        })
+        grounding = Client({
+            "claims": [{
+                "claim": "The inspected count was 12.",
+                "evidence_ids": ["step-1-inspect_universe"],
+                "grounding": "supported",
+            }],
+        })
+
+        def inspect(*, run_id, **arguments):
+            sleep(0.02)
+            return ToolResult(
+                tool_name="inspect_universe",
+                run_id=run_id,
+                normalized_args=arguments,
+                result={"count": 12},
+            )
+
+        with patch("agent.tools.executor.TOOL_FUNCTIONS", {"inspect_universe": inspect}):
+            result = run_agent(
+                "Inspect the universe.",
+                planner_client=planner,
+                hitl_client=hitl,
+                synthesis_client=synthesis,
+                grounding_client=grounding,
+            )
+
+        summary = result["telemetry"]["summary"]
+        self.assertGreater(summary["wall_clock_ms"], summary["provider_latency_ms"])
+        self.assertGreater(summary["wall_clock_ms"], 15)
 
     def test_run_agent_aggregates_planner_retrieval_hitl_synthesis_grounding(self):
         usage = self.USAGE

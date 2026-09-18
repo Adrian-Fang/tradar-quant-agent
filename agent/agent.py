@@ -10,7 +10,7 @@ from .answer.synthesizer import synthesize_answer
 from .context.builder import construct_context
 from .context.selector import select_context
 from .core.contracts import ResearchRun
-from .core.safety import check_request_safety
+from .core.safety import SafetyClient, check_request_safety, quarantine_untrusted_text
 from .core.telemetry import RunTelemetry, TelemetryClient
 from .grounding.verifier import verify_answer_grounding
 from .hitl.gate import gate_action
@@ -127,6 +127,41 @@ def _finish(
     safety: dict[str, Any] | None = None,
     telemetry: RunTelemetry | None = None,
 ) -> dict[str, Any]:
+    if telemetry is not None:
+        runtime_stage = error_stage
+        if runtime_stage is None and outcome in {"needs_input", "no_action"}:
+            runtime_stage = "planning"
+        elif runtime_stage is None and outcome == "needs_approval":
+            runtime_stage = "hitl"
+        elif runtime_stage is None and outcome == "abstain":
+            runtime_stage = (
+                "synthesis"
+                if synthesis and synthesis.get("status") == "insufficient_evidence"
+                else "retrieval"
+                if retrieval.get("status") == "abstain"
+                else None
+            )
+        elif runtime_stage is None and outcome == "blocked":
+            runtime_stage = (
+                "safety"
+                if safety and safety.get("status") == "blocked"
+                else "hitl"
+                if hitl and hitl.get("decision") != "proceed"
+                else "grounding"
+                if grounding_trace and not grounding_trace.get("fully_grounded")
+                else None
+            )
+        elif runtime_stage is None and outcome == "error":
+            runtime_stage = (
+                "execution"
+                if research_run and research_run.status == "failed"
+                else "planning"
+                if planning and planning.get("status") == "error"
+                else "retrieval"
+                if retrieval.get("status") == "error"
+                else None
+            )
+        telemetry.set_runtime_failure_stage(runtime_stage)
     observed = {
         "context": {"selected_ids": context_ids},
         "planning": planning,
@@ -209,9 +244,19 @@ def run_agent(
             telemetry=telemetry,
         )
 
+    safe_context_items = []
+    for item in context_items or []:
+        event = quarantine_untrusted_text(
+            item.get("text", ""), source=f"context:{item['id']}"
+        )
+        if event["status"] == "quarantined":
+            safety["events"].append(event)
+        else:
+            safe_context_items.append(item)
+
     items = [
         {"id": "request_scope", "kind": "current_instruction", "text": user_request},
-        *(context_items or []),
+        *safe_context_items,
     ]
     selected = select_context(items)["selected"]
     retrieval_result = None
@@ -223,7 +268,7 @@ def run_agent(
         retrieval_result = retrieve_verified(
             user_request,
             client=TelemetryClient(
-                retrieval_client,
+                SafetyClient(retrieval_client),
                 telemetry,
                 stage="retrieval_verifier",
                 model=model,
@@ -257,6 +302,7 @@ def run_agent(
                 status="error",
                 error_type=error.get("error_type", "retrieval_error"),
                 error=error.get("error", "retrieval failed"),
+                error_stage="retrieval",
                 safety=safety,
                 telemetry=telemetry,
             )
@@ -283,7 +329,13 @@ def run_agent(
             for field in ("source", "provenance"):
                 if result.get(field):
                     item[field] = result[field]
-            items.append(item)
+            event = quarantine_untrusted_text(
+                item["text"], source=f"retrieval:{item['id']}"
+            )
+            if event["status"] == "quarantined":
+                safety["events"].append(event)
+            else:
+                items.append(item)
         selected = select_context(items)["selected"]
 
     construction = construct_context(
@@ -292,7 +344,9 @@ def run_agent(
     )
     planned = plan_request(
         construction["input"],
-        client=TelemetryClient(planner_client, telemetry, stage="planning", model=model),
+        client=TelemetryClient(
+            SafetyClient(planner_client), telemetry, stage="planning", model=model
+        ),
         model=model,
     )
     if planned["status"] == "error":
@@ -313,6 +367,7 @@ def run_agent(
             status="error",
             error_type=planned["error_type"],
             error=planned["error"],
+            error_stage="planning",
             safety=safety,
             telemetry=telemetry,
         )
@@ -342,7 +397,9 @@ def run_agent(
         action,
         existing_approval or {"approved": False, "scope": None},
         boundaries,
-        client=TelemetryClient(hitl_client, telemetry, stage="hitl", model=model),
+        client=TelemetryClient(
+            SafetyClient(hitl_client), telemetry, stage="hitl", model=model
+        ),
         model=model,
     )
     if gate["status"] == "error":
@@ -360,6 +417,7 @@ def run_agent(
             status="error",
             error_type=gate["error_type"],
             error=gate["error"],
+            error_stage="hitl",
             safety=safety,
             telemetry=telemetry,
         )
@@ -403,6 +461,7 @@ def run_agent(
             status="error",
             error_type="orchestration_error",
             error=f"{type(exc).__name__}: {exc}",
+            error_stage="orchestration",
             orchestration={"status": "error", "type": "orchestration_error"},
             safety=safety,
             telemetry=telemetry,
@@ -421,11 +480,44 @@ def run_agent(
             outcome="error",
             plan=plan,
             retrieval_result=retrieval_result,
+            error_stage="execution",
             safety=safety,
             telemetry=telemetry,
         )
 
     bound_evidence = tool_results_to_evidence(tool_results)
+    safe_evidence = []
+    tool_injection = False
+    for item in bound_evidence:
+        event = quarantine_untrusted_text(
+            item["text"], source=f"tool_output:{item['id']}"
+        )
+        if event["status"] == "quarantined":
+            tool_injection = True
+            safety["events"].append(event)
+        else:
+            safe_evidence.append(item)
+    bound_evidence = safe_evidence
+    if tool_injection and not bound_evidence:
+        safety.update({
+            "status": "blocked",
+            "rule": "untrusted_instruction_injection",
+            "reason": "all executable evidence was quarantined by the safety boundary",
+        })
+        return _finish(
+            context_ids=[item["id"] for item in selected],
+            planning=planning,
+            steps=steps,
+            retrieval=retrieval_trace,
+            research_run=run,
+            grounding=None,
+            hitl=hitl_trace,
+            outcome="blocked",
+            plan=plan,
+            retrieval_result=retrieval_result,
+            safety=safety,
+            telemetry=telemetry,
+        )
     synthesis = None
     synthesized_answer = None
     if synthesis_client is not None:
@@ -433,7 +525,7 @@ def run_agent(
             user_request,
             bound_evidence,
             client=TelemetryClient(
-                synthesis_client,
+                SafetyClient(synthesis_client),
                 telemetry,
                 stage="synthesis",
                 model=model,
@@ -497,7 +589,7 @@ def run_agent(
             answer,
             evidence,
             client=TelemetryClient(
-                grounding_client,
+                SafetyClient(grounding_client),
                 telemetry,
                 stage="grounding",
                 model=model,

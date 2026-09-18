@@ -3,24 +3,52 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from time import perf_counter
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from .safety import TRUST_BOUNDARY_INSTRUCTIONS
-
-
-# Prices are explicit configuration, separate from provider usage. Values are
-# USD per million tokens; callers should update this table when billing changes.
+# Prices are explicit, versioned configuration, separate from provider usage.
+PRICING_VERSION = "2026-09-18"
 MODEL_PRICING = {
-    ("deepseek", "deepseek-v4-flash"): {
-        "input_per_million": 0.14,
-        "output_per_million": 0.28,
+    ("deepseek", "deepseek-flash"): {
+        "currency": "CNY",
+        "off_peak": {
+            "input_per_million": 1.0,
+            "cached_input_per_million": 0.02,
+            "output_per_million": 4.0,
+        },
+        "peak": {
+            "input_per_million": 2.0,
+            "cached_input_per_million": 0.04,
+            "output_per_million": 8.0,
+        },
+    },
+    ("deepseek", "deepseek-v4-pro"): {
+        "currency": "CNY",
+        "off_peak": {
+            "input_per_million": 4.5,
+            "cached_input_per_million": 0.15,
+            "output_per_million": 13.5,
+        },
+        "peak": {
+            "input_per_million": 9.0,
+            "cached_input_per_million": 0.30,
+            "output_per_million": 27.0,
+        },
     },
     ("openai", "gpt-5"): {
+        "currency": "USD",
         "input_per_million": 1.25,
+        "cached_input_per_million": 0.125,
         "output_per_million": 10.0,
     },
 }
+DEEPSEEK_MODEL_ALIASES = {
+    "deepseek-v4-flash": "deepseek-flash",
+    "deepseek-v4-flash-vision-exp": "deepseek-flash",
+}
+BEIJING_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 def _field(value: Any, name: str, default: Any = None) -> Any:
@@ -66,15 +94,28 @@ def _usage(response: Any) -> dict[str, int | None]:
 
 
 def _provider_name(client: Any) -> str | None:
-    provider = getattr(client, "provider", None)
-    if isinstance(provider, str) and provider:
-        return provider
     names = {
         "DeepSeekChatClient": "deepseek",
         "OpenAIResponsesClient": "openai",
         "FixtureClient": "fixture",
     }
-    return names.get(type(client).__name__)
+    seen = set()
+    while client is not None and id(client) not in seen:
+        seen.add(id(client))
+        provider = getattr(client, "provider", None)
+        if isinstance(provider, str) and provider:
+            return provider
+        provider = names.get(type(client).__name__)
+        if provider:
+            return provider
+        client = getattr(client, "client", None)
+    return None
+
+
+def _canonical_model(provider: str | None, model: str) -> str:
+    if provider == "deepseek":
+        return DEEPSEEK_MODEL_ALIASES.get(model, model)
+    return model
 
 
 def estimate_cost(
@@ -82,14 +123,34 @@ def estimate_cost(
     model: str | None,
     input_tokens: int | None,
     output_tokens: int | None,
+    cached_tokens: int | None = None,
+    at: datetime | None = None,
 ) -> float | None:
     if provider is None or model is None or input_tokens is None or output_tokens is None:
         return None
-    pricing = MODEL_PRICING.get((provider, model))
+    canonical_model = _canonical_model(provider, model)
+    pricing = MODEL_PRICING.get((provider, canonical_model))
     if pricing is None:
         return None
+    if cached_tokens is None or cached_tokens < 0 or cached_tokens > input_tokens:
+        return None
+    if "peak" in pricing:
+        local_time = at or datetime.now(BEIJING_TIMEZONE)
+        local_time = (
+            local_time.replace(tzinfo=BEIJING_TIMEZONE)
+            if local_time.tzinfo is None
+            else local_time.astimezone(BEIJING_TIMEZONE)
+        )
+        is_peak = (
+            local_time.weekday() < 5
+            and (9 <= local_time.hour < 12 or 14 <= local_time.hour < 18)
+        )
+        pricing = pricing["peak" if is_peak else "off_peak"]
     return round(
-        input_tokens * pricing["input_per_million"] / 1_000_000
+        (input_tokens - cached_tokens) * pricing["input_per_million"] / 1_000_000
+        + cached_tokens * pricing.get(
+            "cached_input_per_million", pricing["input_per_million"]
+        ) / 1_000_000
         + output_tokens * pricing["output_per_million"] / 1_000_000,
         8,
     )
@@ -102,6 +163,12 @@ def _aggregate(calls: list[dict[str, Any]]) -> dict[str, Any]:
             return None
         return sum(values)
 
+    estimated_cost = total("estimated_cost")
+    currencies = {
+        call["estimated_cost_currency"]
+        for call in calls
+        if call["estimated_cost"] is not None
+    }
     return {
         "calls": len(calls),
         "input_tokens": total("input_tokens"),
@@ -113,8 +180,13 @@ def _aggregate(calls: list[dict[str, Any]]) -> dict[str, Any]:
             if total("input_tokens") is not None and total("output_tokens") is not None
             else None
         ),
-        "latency_ms": round(sum(call["latency_ms"] for call in calls), 3),
-        "estimated_cost": total("estimated_cost"),
+        "provider_latency_ms": round(sum(call["latency_ms"] for call in calls), 3),
+        "estimated_cost": estimated_cost,
+        "estimated_cost_currency": (
+            next(iter(currencies))
+            if estimated_cost is not None and len(currencies) == 1
+            else None
+        ),
     }
 
 
@@ -123,6 +195,11 @@ class RunTelemetry:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.started = perf_counter()
+        self.runtime_failure_stage: str | None = None
+
+    def set_runtime_failure_stage(self, stage: str | None) -> None:
+        self.runtime_failure_stage = stage
 
     def record(
         self,
@@ -134,6 +211,7 @@ class RunTelemetry:
         latency_ms: float,
         success: bool,
         error_type: str | None = None,
+        at: datetime | None = None,
     ) -> None:
         usage = _usage(response) if success else {
             "input_tokens": None,
@@ -152,7 +230,15 @@ class RunTelemetry:
                 model,
                 usage["input_tokens"],
                 usage["output_tokens"],
+                usage["cached_tokens"],
+                at,
             ) if success else None,
+            "estimated_cost_currency": (
+                MODEL_PRICING.get(
+                    (provider, _canonical_model(provider, model or "")), {}
+                ).get("currency")
+                if success else None
+            ),
             "success": success,
             "error_type": error_type,
         })
@@ -161,14 +247,18 @@ class RunTelemetry:
         stages = {}
         for call in self.calls:
             stages.setdefault(call["stage"], []).append(call)
+        provider_failure_stage = next(
+            (call["stage"] for call in self.calls if not call["success"]),
+            None,
+        )
         return {
             "calls": self.calls,
             "summary": {
                 **_aggregate(self.calls),
-                "failure_stage": next(
-                    (call["stage"] for call in self.calls if not call["success"]),
-                    None,
-                ),
+                "pricing_version": PRICING_VERSION,
+                "wall_clock_ms": round((perf_counter() - self.started) * 1000, 3),
+                "failure_stage": self.runtime_failure_stage or provider_failure_stage,
+                "provider_failure_stage": provider_failure_stage,
                 "per_stage": {
                     stage: _aggregate(stage_calls)
                     for stage, stage_calls in stages.items()
@@ -194,16 +284,12 @@ class TelemetryClient:
         self.model = model
 
     def create(self, payload: Mapping[str, Any]) -> Any:
-        request_payload = dict(payload)
-        instructions = request_payload.get("instructions", "")
-        request_payload["instructions"] = (
-            f"{instructions}\n\n{TRUST_BOUNDARY_INSTRUCTIONS}"
-        )
         provider = _provider_name(self.client)
-        model = request_payload.get("model") or self.model or getattr(self.client, "model", None)
+        model = payload.get("model") or self.model or getattr(self.client, "model", None)
         started = perf_counter()
+        request_time = datetime.now(BEIJING_TIMEZONE)
         try:
-            response = self.client.create(request_payload)
+            response = self.client.create(payload)
         except Exception as exc:
             self.telemetry.record(
                 stage=self.stage,
@@ -212,6 +298,7 @@ class TelemetryClient:
                 latency_ms=(perf_counter() - started) * 1000,
                 success=False,
                 error_type=type(exc).__name__,
+                at=request_time,
             )
             raise
         self.telemetry.record(
@@ -221,8 +308,17 @@ class TelemetryClient:
             response=response,
             latency_ms=(perf_counter() - started) * 1000,
             success=True,
+            at=request_time,
         )
         return response
 
 
-__all__ = ["MODEL_PRICING", "RunTelemetry", "TelemetryClient", "estimate_cost"]
+__all__ = [
+    "BEIJING_TIMEZONE",
+    "DEEPSEEK_MODEL_ALIASES",
+    "MODEL_PRICING",
+    "PRICING_VERSION",
+    "RunTelemetry",
+    "TelemetryClient",
+    "estimate_cost",
+]

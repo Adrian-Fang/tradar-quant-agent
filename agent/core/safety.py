@@ -69,6 +69,19 @@ _BLOCK_PATTERNS = (
     ),
 )
 
+_ACTIVE_INJECTION = re.compile(
+    r"^(?:[\{\[]\s*)?(?:please\s+)?"
+    r"(?:(?:important|system|developer|instruction|instructions|command|directive)"
+    r"\s*[:\-]\s*)?"
+    r"(?:ignore|disregard|override|forget|bypass|disable|reveal|show|print|send|export)\b",
+    re.IGNORECASE,
+)
+_STRUCTURED_INJECTION = re.compile(
+    r":\s*[\"']?\s*(?:please\s+)?(?:ignore|disregard|override|forget|bypass|disable|"
+    r"reveal|show|print|send|export)\b",
+    re.IGNORECASE,
+)
+
 
 def _without_quotes(text: str) -> str:
     return re.sub(r"(['\"])(?:\\.|(?!\1).)*\1|`[^`]*`", "", text)
@@ -89,6 +102,7 @@ def check_request_safety(
                 "stage": "safety",
                 "rule": rule,
                 "reason": f"request matched the {rule} safety boundary",
+                "events": [],
             }
 
     boundary_text = " ".join(product_boundaries).casefold()
@@ -107,9 +121,59 @@ def check_request_safety(
             "stage": "safety",
             "rule": "product_boundary",
             "reason": "the requested action violates a configured product boundary",
+            "events": [],
         }
 
-    return {"status": "allowed", "stage": "safety", "rule": None, "reason": ""}
+    return {
+        "status": "allowed",
+        "stage": "safety",
+        "rule": None,
+        "reason": "",
+        "events": [],
+    }
 
 
-__all__ = ["TRUST_BOUNDARY_INSTRUCTIONS", "check_request_safety"]
+def quarantine_untrusted_text(text: str, *, source: str) -> dict[str, Any]:
+    """Detect active instruction-like text without blocking quoted analysis."""
+    raw = text.strip()
+    structured = raw.startswith(("{", "[")) and _STRUCTURED_INJECTION.search(raw)
+    if _ACTIVE_INJECTION.search(_without_quotes(raw)) or structured:
+        return {
+            "status": "quarantined",
+            "stage": "safety",
+            "rule": "untrusted_instruction_injection",
+            "source": source,
+            "reason": "untrusted text contained an active instruction-like directive",
+        }
+    return {
+        "status": "allowed",
+        "stage": "safety",
+        "rule": None,
+        "source": source,
+        "reason": "",
+    }
+
+
+class SafetyClient:
+    """Apply trusted boundary instructions before the provider call."""
+
+    def __init__(self, client: Any) -> None:
+        self.client = client
+        self.provider = getattr(client, "provider", None)
+        self.model = getattr(client, "model", None)
+
+    def create(self, payload: dict[str, Any]) -> Any:
+        request_payload = dict(payload)
+        request_payload["instructions"] = (
+            f"{request_payload.get('instructions', '')}\n\n"
+            f"{TRUST_BOUNDARY_INSTRUCTIONS}"
+        )
+        return self.client.create(request_payload)
+
+
+__all__ = [
+    "SafetyClient",
+    "TRUST_BOUNDARY_INSTRUCTIONS",
+    "check_request_safety",
+    "quarantine_untrusted_text",
+]
