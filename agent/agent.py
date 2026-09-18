@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 from .answer.synthesizer import synthesize_answer
@@ -27,6 +28,60 @@ def _steps(run: ResearchRun) -> list[dict[str, Any]]:
     ]
 
 
+def _bounded_array(values: list[Any], limit: int) -> Any:
+    if len(values) <= limit:
+        return values
+    head = limit // 2
+    return {
+        "items": values[:head] + values[-head:],
+        "omitted_count": len(values) - (head * 2),
+    }
+
+
+def _bounded_tool_output(tool_name: str, result: Any) -> Any:
+    if tool_name != "inspect_universe" or not isinstance(result, Mapping):
+        return result
+
+    output = dict(result)
+    if isinstance(output.get("daily_counts"), list):
+        output["daily_counts"] = _bounded_array(output["daily_counts"], 24)
+
+    snapshots = output.get("snapshots")
+    if isinstance(snapshots, list):
+        if len(snapshots) > 8:
+            head = 4
+            snapshot_items = snapshots[:head] + snapshots[-head:]
+            snapshot_output = {
+                "items": snapshot_items,
+                "omitted_count": len(snapshots) - (head * 2),
+            }
+        else:
+            snapshot_items = snapshots
+            snapshot_output = None
+
+        bounded_snapshots = []
+        for snapshot in snapshot_items:
+            if not isinstance(snapshot, Mapping):
+                bounded_snapshots.append(snapshot)
+                continue
+            snapshot_copy = dict(snapshot)
+            membership = snapshot_copy.get("membership")
+            if isinstance(membership, Mapping):
+                membership_copy = dict(membership)
+                for name in ("eligible", "trading", "buyable", "sellable", "price_limit_known"):
+                    if isinstance(membership_copy.get(name), list):
+                        membership_copy[name] = _bounded_array(membership_copy[name], 24)
+                snapshot_copy["membership"] = membership_copy
+            bounded_snapshots.append(snapshot_copy)
+
+        if snapshot_output is None:
+            output["snapshots"] = bounded_snapshots
+        else:
+            snapshot_output["items"] = bounded_snapshots
+            output["snapshots"] = snapshot_output
+    return output
+
+
 def tool_results_to_evidence(tool_results: list[Any]) -> list[dict[str, str]]:
     """Serialize successful tool outputs as grounding-compatible evidence."""
     evidence = []
@@ -34,7 +89,7 @@ def tool_results_to_evidence(tool_results: list[Any]) -> list[dict[str, str]]:
         if tool_result.status not in {"success", "partial"}:
             continue
         text = json.dumps(
-            tool_result.to_dict()["result"],
+            _bounded_tool_output(tool_result.tool_name, tool_result.to_dict()["result"]),
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
