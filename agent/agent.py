@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
+from .answer.synthesizer import synthesize_answer
 from .context.builder import construct_context
 from .context.selector import select_context
 from .core.contracts import ResearchRun
@@ -25,6 +27,25 @@ def _steps(run: ResearchRun) -> list[dict[str, Any]]:
     ]
 
 
+def tool_results_to_evidence(tool_results: list[Any]) -> list[dict[str, str]]:
+    """Serialize successful tool outputs as grounding-compatible evidence."""
+    evidence = []
+    for seq, tool_result in enumerate(tool_results, 1):
+        if tool_result.status not in {"success", "partial"}:
+            continue
+        text = json.dumps(
+            tool_result.to_dict()["result"],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        evidence.append({
+            "id": f"step-{seq}-{tool_result.tool_name}",
+            "text": text,
+        })
+    return evidence
+
+
 def _finish(
     *,
     context_ids: list[str],
@@ -41,7 +62,11 @@ def _finish(
     status: str = "ok",
     error_type: str | None = None,
     error: str = "",
+    error_stage: str | None = None,
     orchestration: dict[str, Any] | None = None,
+    answer: str | None = None,
+    evidence: list[dict[str, str]] | None = None,
+    synthesis: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     observed = {
         "context": {"selected_ids": context_ids},
@@ -65,7 +90,11 @@ def _finish(
         "grounding": grounding,
         "hitl": hitl,
         "observed": observed,
+        "answer": answer,
+        "evidence": evidence,
+        "synthesis": synthesis,
         "error_type": error_type,
+        "error_stage": error_stage,
         "error": error,
     }
 
@@ -75,6 +104,7 @@ def run_agent(
     *,
     planner_client: Any,
     hitl_client: Any | None = None,
+    synthesis_client: Any | None = None,
     grounding_client: Any | None = None,
     retrieval_client: Any | None = None,
     semantic_embedder: Any | None = None,
@@ -92,7 +122,7 @@ def run_agent(
     topic: str | None = None,
     record_status: str | None = None,
 ) -> dict[str, Any]:
-    """Run context/retrieval, planning, HITL, execution, and optional grounding."""
+    """Run context/retrieval, planning, HITL, execution, synthesis, and grounding."""
     if not isinstance(user_request, str) or not user_request.strip():
         raise ValueError("user_request must be a non-empty string")
 
@@ -255,8 +285,9 @@ def run_agent(
         user_request=user_request,
         **({"run_id": run_id} if run_id is not None else {}),
     )
+    tool_results = []
     try:
-        run = execute_steps(plan["steps"], run=run)
+        run = execute_steps(plan["steps"], run=run, tool_results=tool_results)
     except Exception as exc:
         return _finish(
             context_ids=[item["id"] for item in selected],
@@ -290,8 +321,62 @@ def run_agent(
             retrieval_result=retrieval_result,
         )
 
+    bound_evidence = tool_results_to_evidence(tool_results)
+    synthesis = None
+    synthesized_answer = None
+    if synthesis_client is not None:
+        synthesis_result = synthesize_answer(
+            user_request,
+            bound_evidence,
+            client=synthesis_client,
+            model=model,
+        )
+        if synthesis_result["status"] == "error":
+            return _finish(
+                context_ids=[item["id"] for item in selected],
+                planning=planning,
+                steps=steps,
+                retrieval=retrieval_trace,
+                research_run=run,
+                grounding=None,
+                hitl=hitl_trace,
+                outcome="error",
+                plan=plan,
+                retrieval_result=retrieval_result,
+                status="error",
+                error_type=synthesis_result["error_type"],
+                error_stage="synthesis",
+                error=synthesis_result["error"],
+                evidence=bound_evidence,
+            )
+        synthesis = synthesis_result["result"]
+        synthesized_answer = synthesis["answer"]
+        cited_ids = set(synthesis["evidence_ids"])
+        bound_evidence = [item for item in bound_evidence if item["id"] in cited_ids]
+        if synthesis["status"] == "insufficient_evidence":
+            return _finish(
+                context_ids=[item["id"] for item in selected],
+                planning=planning,
+                steps=steps,
+                retrieval=retrieval_trace,
+                research_run=run,
+                grounding=None,
+                hitl=hitl_trace,
+                outcome="abstain",
+                plan=plan,
+                retrieval_result=retrieval_result,
+                answer=synthesized_answer,
+                evidence=bound_evidence,
+                synthesis=synthesis,
+            )
+    elif answer is None and evidence is None:
+        raise ValueError("synthesis_client is required after successful execution")
+
     grounding = None
     grounding_trace = None
+    if synthesis_client is not None:
+        answer = synthesized_answer
+        evidence = bound_evidence
     if answer is not None:
         if grounding_client is None or evidence is None:
             raise ValueError("grounding_client and evidence are required with answer")
@@ -312,7 +397,11 @@ def run_agent(
                 retrieval_result=retrieval_result,
                 status="error",
                 error_type=grounding_result["error_type"],
+                error_stage="grounding",
                 error=grounding_result["error"],
+                answer=answer,
+                evidence=evidence,
+                synthesis=synthesis,
             )
         grounding = grounding_result["assessment"]
         grounding_trace = {
@@ -337,7 +426,10 @@ def run_agent(
         outcome=outcome,
         plan=plan,
         retrieval_result=retrieval_result,
+        answer=answer,
+        evidence=evidence,
+        synthesis=synthesis,
     )
 
 
-__all__ = ["run_agent"]
+__all__ = ["run_agent", "tool_results_to_evidence"]

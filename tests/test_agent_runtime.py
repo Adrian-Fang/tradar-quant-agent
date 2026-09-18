@@ -207,7 +207,17 @@ class AgentRuntimeTests(unittest.TestCase):
         retrieve.assert_called_once()
 
     def test_context_items_are_selected_before_planning(self):
-        result, planner, _, _, _ = self.run_with_tool()
+        result, planner, _, _, _ = self.run_with_tool(
+            answer="The universe was inspected.",
+            grounding={
+                "answer": "ignored",
+                "claims": [{
+                    "claim": "The universe was inspected.",
+                    "evidence_ids": ["e1"],
+                    "grounding": "supported",
+                }],
+            },
+        )
         body = json.loads(planner.calls[0]["input"])
         self.assertIn("request_scope", body["user_request"])
 

@@ -14,6 +14,7 @@ def execute_steps(
     *,
     run: ResearchRun | None = None,
     user_request: str = "",
+    tool_results: list[ToolResult] | None = None,
 ) -> ResearchRun:
     """Execute explicit tool steps in order and return the canonical trace."""
     if run is None:
@@ -55,6 +56,8 @@ def execute_steps(
             )
 
         run.add_step(tool_result)
+        if tool_results is not None:
+            tool_results.append(tool_result)
         if tool_result.status == "error":
             run.fail()
             break
