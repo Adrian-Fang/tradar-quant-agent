@@ -161,7 +161,10 @@ def _finish(
                 if retrieval.get("status") == "error"
                 else None
             )
-        telemetry.set_runtime_failure_stage(runtime_stage)
+        telemetry.set_runtime_stages(
+            runtime_stage if outcome in {"error", "blocked"} else None,
+            runtime_stage,
+        )
     observed = {
         "context": {"selected_ids": context_ids},
         "planning": planning,

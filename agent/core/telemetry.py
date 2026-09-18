@@ -169,6 +169,8 @@ def _aggregate(calls: list[dict[str, Any]]) -> dict[str, Any]:
         for call in calls
         if call["estimated_cost"] is not None
     }
+    if len(currencies) > 1:
+        estimated_cost = None
     return {
         "calls": len(calls),
         "input_tokens": total("input_tokens"),
@@ -197,9 +199,15 @@ class RunTelemetry:
         self.calls: list[dict[str, Any]] = []
         self.started = perf_counter()
         self.runtime_failure_stage: str | None = None
+        self.terminal_stage: str | None = None
 
-    def set_runtime_failure_stage(self, stage: str | None) -> None:
-        self.runtime_failure_stage = stage
+    def set_runtime_stages(
+        self,
+        failure_stage: str | None,
+        terminal_stage: str | None,
+    ) -> None:
+        self.runtime_failure_stage = failure_stage
+        self.terminal_stage = terminal_stage
 
     def record(
         self,
@@ -259,6 +267,7 @@ class RunTelemetry:
                 "wall_clock_ms": round((perf_counter() - self.started) * 1000, 3),
                 "failure_stage": self.runtime_failure_stage or provider_failure_stage,
                 "provider_failure_stage": provider_failure_stage,
+                "terminal_stage": self.terminal_stage,
                 "per_stage": {
                     stage: _aggregate(stage_calls)
                     for stage, stage_calls in stages.items()

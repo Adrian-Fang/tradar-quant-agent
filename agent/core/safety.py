@@ -70,7 +70,7 @@ _BLOCK_PATTERNS = (
 )
 
 _ACTIVE_INJECTION = re.compile(
-    r"^(?:[\{\[]\s*)?(?:please\s+)?"
+    r"(?:^|[.!?\n])\s*(?:[\{\[]\s*)?(?:please\s+)?"
     r"(?:(?:important|system|developer|instruction|instructions|command|directive)"
     r"\s*[:\-]\s*)?"
     r"(?:ignore|disregard|override|forget|bypass|disable|reveal|show|print|send|export)\b",
