@@ -21,6 +21,9 @@ DEFAULT_MODELS = {
     "deepseek": "deepseek-flash",
     "openai": "gpt-5",
 }
+DEFAULT_PRODUCT_BOUNDARIES = [
+    "Tradar does not execute live trading or place real-money orders.",
+]
 
 
 def create_provider_client(provider: str, *, api_key: str | None = None) -> Any:
@@ -59,6 +62,9 @@ def run_request(
     if provider == "fixture" and client is None:
         raise ValueError("fixture provider requires an injected client")
 
+    product_boundaries = run_options.pop(
+        "product_boundaries", DEFAULT_PRODUCT_BOUNDARIES
+    )
     if client is None:
         client = create_provider_client(provider, api_key=api_key)
     model = model or _default_model(provider)
@@ -86,6 +92,7 @@ def run_request(
         retrieval_client=client if semantic_embedder is not None else None,
         semantic_embedder=semantic_embedder,
         model=model,
+        product_boundaries=product_boundaries,
         **run_options,
     )
 
@@ -179,6 +186,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "DEFAULT_PRODUCT_BOUNDARIES",
     "DEFAULT_MODELS",
     "create_provider_client",
     "format_human",

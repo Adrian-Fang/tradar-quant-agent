@@ -51,6 +51,34 @@ class AgentMainTests(unittest.TestCase):
         self.assertIsNone(kwargs["retrieval_client"])
         self.assertIsNone(kwargs["semantic_embedder"])
         self.assertEqual(kwargs["model"], "")
+        self.assertEqual(
+            kwargs["product_boundaries"],
+            ["Tradar does not execute live trading or place real-money orders."],
+        )
+
+    def test_explicit_product_boundaries_are_preserved(self):
+        client = Mock()
+        boundaries = ["Custom product boundary."]
+        with patch("agent.main.run_agent", return_value={"status": "ok"}) as run:
+            run_request(
+                "test",
+                provider="fixture",
+                client=client,
+                product_boundaries=boundaries,
+            )
+        self.assertIs(run.call_args.kwargs["product_boundaries"], boundaries)
+
+    def test_default_boundary_blocks_live_trade_before_model_or_tools(self):
+        client = Mock()
+        result = run_request(
+            "Execute live trading for the requested stock.",
+            provider="fixture",
+            client=client,
+        )
+
+        self.assertEqual(result["observed"]["outcome"], {"status": "blocked"})
+        self.assertEqual(result["safety"]["rule"], "product_boundary")
+        client.create.assert_not_called()
 
     def test_retrieval_uses_same_chat_client_and_selected_embedder(self):
         client = Mock()
