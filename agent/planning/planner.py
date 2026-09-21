@@ -11,7 +11,7 @@ from ..tools.calling import TOOL_SCHEMAS
 
 
 PROMPT = load_prompt("prompts/planning.md")
-ALLOWED_STATUSES = {"ready", "needs_input", "no_action"}
+ALLOWED_STATUSES = {"ready", "finish", "needs_input", "no_action"}
 TOOL_NAMES = {schema["name"] for schema in TOOL_SCHEMAS}
 TOOL_PARAMETERS = {
     schema["name"]: schema["parameters"] for schema in TOOL_SCHEMAS
@@ -59,7 +59,7 @@ def parse_plan_response(text: str) -> tuple[dict[str, Any] | None, str | None]:
     if parsed["status"] == "ready" and not parsed["steps"]:
         return None, "ready response must contain at least one step"
     if parsed["status"] != "ready" and parsed["steps"]:
-        return None, "needs_input and no_action responses must have empty steps"
+        return None, "non-ready responses must have empty steps"
     return parsed, None
 
 
@@ -68,15 +68,19 @@ def plan_request(
     *,
     client: Any,
     model: str = "",
+    observations: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask an injected provider for a plan without executing any step."""
+    request = {
+        "user_request": user_request,
+        "tool_schemas": TOOL_SCHEMAS,
+    }
+    if observations is not None:
+        request["observations"] = observations
     payload = {
         "model": model,
         "instructions": PROMPT,
-        "input": json.dumps({
-            "user_request": user_request,
-            "tool_schemas": TOOL_SCHEMAS,
-        }, ensure_ascii=False),
+        "input": json.dumps(request, ensure_ascii=False),
     }
     try:
         response = client.create(payload)

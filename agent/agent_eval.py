@@ -42,7 +42,7 @@ def _validate_observed(observed: Any) -> None:
     if (
         not isinstance(observed, dict)
         or not REQUIRED_OBSERVED_FIELDS.issubset(observed)
-        or set(observed) - REQUIRED_OBSERVED_FIELDS - {"failure"}
+        or set(observed) - REQUIRED_OBSERVED_FIELDS - {"failure", "loop"}
     ):
         raise ValueError("observed envelope has invalid fields")
 
@@ -138,6 +138,14 @@ def _validate_observed(observed: Any) -> None:
 
     if not isinstance(observed["outcome"], dict) or observed["outcome"].get("status") not in OUTCOME_STATUSES:
         raise ValueError("observed.outcome has invalid status")
+
+    if "loop" in observed and (
+        not isinstance(observed["loop"], dict)
+        or not isinstance(observed["loop"].get("iterations"), int)
+        or observed["loop"].get("iterations") < 1
+        or observed["loop"].get("outcome") not in OUTCOME_STATUSES
+    ):
+        raise ValueError("observed.loop has invalid shape")
 
 
 def _trajectory(expected_steps: list[dict[str, Any]], actual_steps: list[dict[str, Any]]) -> dict[str, Any]:

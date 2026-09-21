@@ -206,15 +206,15 @@ class ObservabilityTests(unittest.TestCase):
             )
 
         telemetry = result["telemetry"]
-        self.assertEqual(telemetry["summary"]["calls"], 5)
+        self.assertEqual(telemetry["summary"]["calls"], 6)
         self.assertEqual(
             {call["stage"] for call in telemetry["calls"]},
             {"planning", "retrieval_verifier", "hitl", "synthesis", "grounding"},
         )
-        self.assertEqual(telemetry["summary"]["input_tokens"], 50)
-        self.assertEqual(telemetry["summary"]["output_tokens"], 20)
-        self.assertEqual(telemetry["summary"]["cached_tokens"], 10)
-        self.assertEqual(telemetry["summary"]["reasoning_tokens"], 5)
+        self.assertEqual(telemetry["summary"]["input_tokens"], 60)
+        self.assertEqual(telemetry["summary"]["output_tokens"], 24)
+        self.assertEqual(telemetry["summary"]["cached_tokens"], 12)
+        self.assertEqual(telemetry["summary"]["reasoning_tokens"], 6)
         self.assertIsNone(telemetry["summary"]["estimated_cost"])
         self.assertIsNone(telemetry["summary"]["failure_stage"])
         self.assertEqual(set(telemetry["summary"]["per_stage"]), {

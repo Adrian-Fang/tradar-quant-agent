@@ -15,6 +15,7 @@ def execute_steps(
     run: ResearchRun | None = None,
     user_request: str = "",
     tool_results: list[ToolResult] | None = None,
+    finalize: bool = True,
 ) -> ResearchRun:
     """Execute explicit tool steps in order and return the canonical trace."""
     if run is None:
@@ -63,7 +64,7 @@ def execute_steps(
             break
         if tool_result.status == "partial":
             saw_partial = True
-    else:
+    if finalize and run.status == "running":
         run.complete(final_status="partial" if saw_partial else "success")
 
     return run

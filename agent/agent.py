@@ -14,9 +14,9 @@ from .core.safety import SafetyClient, check_request_safety, quarantine_untruste
 from .core.telemetry import RunTelemetry, TelemetryClient
 from .grounding.verifier import verify_answer_grounding
 from .hitl.gate import gate_action
+from .loop.runner import run_loop
 from .planning.planner import plan_request
 from .retrieval.relevance_verifier import retrieve_verified
-from .tools.executor import execute_steps
 
 
 def _steps(run: ResearchRun) -> list[dict[str, Any]]:
@@ -84,6 +84,63 @@ def _bounded_tool_output(tool_name: str, result: Any) -> Any:
     return output
 
 
+def _planner_loop_decider(
+    planning_input: str,
+    planner_client: Any,
+    telemetry: RunTelemetry,
+    model: str,
+):
+    def decide(observation: dict[str, Any]) -> dict[str, Any]:
+        planned = plan_request(
+            planning_input,
+            client=TelemetryClient(
+                SafetyClient(planner_client), telemetry, stage="planning", model=model
+            ),
+            model=model,
+            observations=observation,
+        )
+        if planned["status"] == "error":
+            return {
+                "status": "error",
+                "error_type": planned["error_type"],
+                "error": planned["error"],
+                "error_stage": "planning",
+            }
+
+        plan = planned["plan"]
+        if plan["status"] != "ready":
+            return {
+                "status": plan["status"],
+                "step": None,
+                "reason": plan["reason"],
+            }
+
+        executed = observation.get("steps", [])
+        for candidate in plan["steps"]:
+            candidate_args = candidate["arguments"]
+            already_executed = any(
+                step.get("tool_name") == candidate["name"]
+                and (
+                    not step.get("normalized_args")
+                    or all(
+                        step["normalized_args"].get(key) == value
+                        for key, value in candidate_args.items()
+                    )
+                )
+                for step in executed
+            )
+            if not already_executed:
+                return {
+                    "status": "execute",
+                    "step": candidate,
+                    "reason": plan["reason"],
+                }
+
+        return {"status": "finish", "step": None, "reason": "evidence is sufficient"}
+
+    return decide
+
+
 def tool_results_to_evidence(tool_results: list[Any]) -> list[dict[str, str]]:
     """Serialize successful tool outputs as grounding-compatible evidence."""
     evidence = []
@@ -126,6 +183,7 @@ def _finish(
     synthesis: dict[str, Any] | None = None,
     safety: dict[str, Any] | None = None,
     telemetry: RunTelemetry | None = None,
+    loop: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if telemetry is not None:
         runtime_stage = error_stage
@@ -179,6 +237,8 @@ def _finish(
         "orchestration": orchestration,
         "outcome": {"status": outcome},
     }
+    if loop is not None:
+        observed["loop"] = loop
     return {
         "status": status,
         "plan": plan,
@@ -220,8 +280,10 @@ def run_agent(
     market: str | None = None,
     topic: str | None = None,
     record_status: str | None = None,
+    loop_decider: Any | None = None,
+    max_iterations: int = 8,
 ) -> dict[str, Any]:
-    """Run context/retrieval, planning, HITL, execution, synthesis, and grounding."""
+    """Run context/retrieval, iterative planning, HITL, execution, synthesis, and grounding."""
     if not isinstance(user_request, str) or not user_request.strip():
         raise ValueError("user_request must be a non-empty string")
 
@@ -395,67 +457,61 @@ def run_agent(
 
     if hitl_client is None:
         raise ValueError("hitl_client is required for a ready plan")
-    gate = gate_action(
-        user_request,
-        action,
-        existing_approval or {"approved": False, "scope": None},
-        boundaries,
-        client=TelemetryClient(
-            SafetyClient(hitl_client), telemetry, stage="hitl", model=model
-        ),
-        model=model,
-    )
-    if gate["status"] == "error":
-        return _finish(
-            context_ids=[item["id"] for item in selected],
-            planning=planning,
-            steps=[],
-            retrieval=retrieval_trace,
-            research_run=None,
-            grounding=None,
-            hitl=None,
-            outcome="error",
-            plan=plan,
-            retrieval_result=retrieval_result,
-            status="error",
-            error_type=gate["error_type"],
-            error=gate["error"],
-            error_stage="hitl",
-            safety=safety,
-            telemetry=telemetry,
-        )
-
-    hitl_trace = {"decision": gate["decision"]}
-    if gate["decision"] != "proceed":
-        return _finish(
-            context_ids=[item["id"] for item in selected],
-            planning=planning,
-            steps=[],
-            retrieval=retrieval_trace,
-            research_run=None,
-            grounding=None,
-            hitl=hitl_trace,
-            outcome=gate["decision"],
-            plan=plan,
-            retrieval_result=retrieval_result,
-            safety=safety,
-            telemetry=telemetry,
-        )
-
     run = ResearchRun(
         user_request=user_request,
         **({"run_id": run_id} if run_id is not None else {}),
     )
     tool_results = []
+    hitl_trace = None
+
+    def gate_before_execute(_: dict[str, Any]) -> dict[str, Any]:
+        nonlocal hitl_trace
+        gate = gate_action(
+            user_request,
+            action,
+            existing_approval or {"approved": False, "scope": None},
+            boundaries,
+            client=TelemetryClient(
+                SafetyClient(hitl_client), telemetry, stage="hitl", model=model
+            ),
+            model=model,
+        )
+        if gate["status"] == "error":
+            return {
+                "status": "error",
+                "error_type": gate["error_type"],
+                "error_stage": "hitl",
+                "error": gate["error"],
+            }
+        hitl_trace = {"decision": gate["decision"]}
+        if gate["decision"] != "proceed":
+            return {"status": "stop", "outcome": gate["decision"]}
+        return {"status": "proceed"}
+
+    planner_decider = (
+        loop_decider
+        if loop_decider is not None
+        else _planner_loop_decider(
+            construction["input"], planner_client, telemetry, model
+        )
+    )
     try:
-        run = execute_steps(plan["steps"], run=run, tool_results=tool_results)
+        loop_result = run_loop(
+            user_request,
+            decide_next=planner_decider,
+            initial_steps=plan["steps"],
+            run=run,
+            tool_results=tool_results,
+            before_execute=gate_before_execute,
+            max_iterations=max_iterations,
+        )
     except Exception as exc:
         return _finish(
             context_ids=[item["id"] for item in selected],
             planning=planning,
             steps=_steps(run),
             retrieval=retrieval_trace,
-            research_run=run,
+            research_run=run if run.steps else None,
             grounding=None,
             hitl=hitl_trace,
             outcome="error",
@@ -468,6 +524,33 @@ def run_agent(
             orchestration={"status": "error", "type": "orchestration_error"},
             safety=safety,
             telemetry=telemetry,
+        )
+
+    run = loop_result["research_run"] or run
+    visible_run = run if run.steps else None
+    loop_trace = {
+        "iterations": loop_result["iterations"],
+        "outcome": loop_result["outcome"],
+    }
+    if loop_result["status"] == "error":
+        return _finish(
+            context_ids=[item["id"] for item in selected],
+            planning=planning,
+            steps=_steps(run),
+            retrieval=retrieval_trace,
+            research_run=visible_run,
+            grounding=None,
+            hitl=hitl_trace,
+            outcome="error",
+            plan=plan,
+            retrieval_result=retrieval_result,
+            status="error",
+            error_type=loop_result["error_type"],
+            error=loop_result["error"],
+            error_stage=loop_result["error_stage"],
+            safety=safety,
+            telemetry=telemetry,
+            loop=loop_trace,
         )
 
     steps = _steps(run)
@@ -486,6 +569,26 @@ def run_agent(
             error_stage="execution",
             safety=safety,
             telemetry=telemetry,
+            loop=loop_trace,
+        )
+
+    if loop_result["outcome"] in {
+        "needs_input", "no_action", "needs_approval", "blocked"
+    }:
+        return _finish(
+            context_ids=[item["id"] for item in selected],
+            planning=planning,
+            steps=steps,
+            retrieval=retrieval_trace,
+            research_run=visible_run,
+            grounding=None,
+            hitl=hitl_trace,
+            outcome=loop_result["outcome"],
+            plan=plan,
+            retrieval_result=retrieval_result,
+            safety=safety,
+            telemetry=telemetry,
+            loop=loop_trace,
         )
 
     bound_evidence = tool_results_to_evidence(tool_results)
@@ -554,6 +657,7 @@ def run_agent(
                 evidence=bound_evidence,
                 safety=safety,
                 telemetry=telemetry,
+                loop=loop_trace,
             )
         synthesis = synthesis_result["result"]
         synthesized_answer = synthesis["answer"]
@@ -576,6 +680,7 @@ def run_agent(
                 synthesis=synthesis,
                 safety=safety,
                 telemetry=telemetry,
+                loop=loop_trace,
             )
     elif answer is None and evidence is None:
         raise ValueError("synthesis_client is required after successful execution")
@@ -620,6 +725,7 @@ def run_agent(
                 synthesis=synthesis,
                 safety=safety,
                 telemetry=telemetry,
+                loop=loop_trace,
             )
         grounding = grounding_result["assessment"]
         grounding_trace = {
@@ -649,6 +755,7 @@ def run_agent(
         synthesis=synthesis,
         safety=safety,
         telemetry=telemetry,
+        loop=loop_trace,
     )
 
 

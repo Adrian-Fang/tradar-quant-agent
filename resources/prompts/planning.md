@@ -7,7 +7,7 @@ Return exactly one JSON object with these fields:
 
 ```json
 {
-  "status": "ready|needs_input|no_action",
+  "status": "ready|finish|needs_input|no_action",
   "steps": [
     {"name": "<tool_name>", "arguments": {}}
   ],
@@ -15,9 +15,14 @@ Return exactly one JSON object with these fields:
 }
 ```
 
-Use `ready` only when the request contains enough information for a complete
-executable plan. A ready plan has at least one step, and every argument needed
-by each step is explicit or an allowed tool default is clearly applicable.
+Use `ready` only when the request contains enough information for an executable
+next action. A ready plan has at least one step, and every argument needed by
+that step is explicit or an allowed tool default is clearly applicable. When
+prior tool observations are supplied, return only the next step, not a batch of
+future steps.
+
+Use `finish` when the supplied observations are sufficient and no more tool
+calls are needed. Its `steps` must be empty.
 
 Use `needs_input` when a required input is missing. Its `steps` must be empty;
 do not guess dates, factor names, artifact paths, or other required values.

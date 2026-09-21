@@ -93,7 +93,7 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(observed["planning"]["status"], "ready")
         self.assertEqual(observed["steps"][0]["status"], "success")
         self.assertTrue(observed["grounding"]["fully_grounded"])
-        self.assertEqual(len(planner.calls), 1)
+        self.assertEqual(len(planner.calls), 2)
         self.assertEqual(len(hitl.calls), 1)
         self.assertEqual(len(ground.calls), 1)
         self.assertEqual(len(calls), 1)
