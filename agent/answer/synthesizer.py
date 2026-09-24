@@ -11,6 +11,23 @@ from ..core.resources import load_prompt
 
 PROMPT = load_prompt("prompts/answer_synthesis.md")
 STATUSES = {"success", "insufficient_evidence"}
+SYNTHESIS_TOOL_NAME = "submit_synthesized_answer"
+SYNTHESIS_TOOL_SCHEMA = {
+    "type": "function",
+    "name": SYNTHESIS_TOOL_NAME,
+    "description": "Submit the final answer and the supplied evidence IDs it uses.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "status": {"type": "string", "enum": sorted(STATUSES)},
+            "answer": {"type": "string"},
+            "evidence_ids": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["status", "answer", "evidence_ids"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
 
 
 def build_synthesis_payload(
@@ -19,7 +36,7 @@ def build_synthesis_payload(
     *,
     model: str = "",
     conversation_history: list[dict[str, str]] | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     input_data = {
         "user_request": user_request,
         "evidence": evidence,
@@ -30,6 +47,9 @@ def build_synthesis_payload(
         "model": model,
         "instructions": PROMPT,
         "input": json.dumps(input_data, ensure_ascii=False),
+        "tools": [SYNTHESIS_TOOL_SCHEMA],
+        "tool_choice": "required",
+        "parallel_tool_calls": False,
     }
 
 
@@ -41,14 +61,39 @@ def response_text(response: Any) -> str:
     return text if isinstance(text, str) else ""
 
 
+def response_payload(response: Any) -> Any:
+    """Read structured function arguments, with JSON text as a fallback."""
+    def field(value: Any, name: str, default: Any = None) -> Any:
+        return value.get(name, default) if isinstance(value, Mapping) else getattr(
+            value, name, default
+        )
+
+    calls = [
+        item
+        for item in field(response, "output", []) or []
+        if field(item, "type") == "function_call"
+    ]
+    if calls:
+        if len(calls) != 1 or field(calls[0], "name") != SYNTHESIS_TOOL_NAME:
+            return {"_invalid_tool_call": True}
+        arguments = field(calls[0], "arguments")
+        if isinstance(arguments, Mapping):
+            return dict(arguments)
+        return arguments if isinstance(arguments, str) else {"_invalid_arguments": True}
+    return response_text(response)
+
+
 def parse_synthesis_response(
-    text: str,
+    response_value: Any,
     evidence_ids: set[str],
 ) -> tuple[Any | None, str | None]:
-    try:
-        parsed = json.loads(text.strip())
-    except json.JSONDecodeError as exc:
-        return None, f"response is not valid JSON: {exc}"
+    if isinstance(response_value, str):
+        try:
+            parsed = json.loads(response_value.strip())
+        except json.JSONDecodeError as exc:
+            return None, f"response is not valid JSON: {exc}"
+    else:
+        parsed = response_value
     if not isinstance(parsed, dict):
         return parsed, "response JSON must be an object"
     if set(parsed) != {"status", "answer", "evidence_ids"}:
@@ -111,9 +156,7 @@ def synthesize_answer(
             "error": f"{type(exc).__name__}: {exc}",
         }
 
-    parsed, parse_error = parse_synthesis_response(
-        response_text(response), evidence_ids,
-    )
+    parsed, parse_error = parse_synthesis_response(response_payload(response), evidence_ids)
     if parse_error:
         return {
             "status": "error",
@@ -132,8 +175,11 @@ def synthesize_answer(
 __all__ = [
     "PROMPT",
     "STATUSES",
+    "SYNTHESIS_TOOL_NAME",
+    "SYNTHESIS_TOOL_SCHEMA",
     "build_synthesis_payload",
     "parse_synthesis_response",
+    "response_payload",
     "response_text",
     "synthesize_answer",
 ]

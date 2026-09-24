@@ -13,6 +13,7 @@ from ..core.resources import load_json
 from .synthesizer import (
     build_synthesis_payload,
     parse_synthesis_response,
+    response_payload,
     response_text,
 )
 
@@ -20,7 +21,7 @@ from .synthesizer import (
 CASES = load_json("eval/answer_synthesis.json")
 
 
-def _prompt(case: dict[str, Any]) -> dict[str, str]:
+def _prompt(case: dict[str, Any]) -> dict[str, Any]:
     return build_synthesis_payload(case["user_request"], case["evidence"])
 
 
@@ -30,14 +31,19 @@ class FixtureClient:
     def __init__(self, case: dict[str, Any]) -> None:
         self.case = case
 
-    def create(self, payload: Mapping[str, Any]) -> dict[str, str]:
+    def create(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         expected = self.case["expected"]
         return {
-            "output_text": json.dumps({
-                "status": expected["status"],
-                "answer": expected["fixture_answer"],
-                "evidence_ids": expected["evidence_ids"],
-            }, ensure_ascii=False),
+            "output_text": "",
+            "output": [{
+                "type": "function_call",
+                "name": payload["tools"][0]["name"],
+                "arguments": json.dumps({
+                    "status": expected["status"],
+                    "answer": expected["fixture_answer"],
+                    "evidence_ids": expected["evidence_ids"],
+                }, ensure_ascii=False),
+            }],
         }
 
 
@@ -58,14 +64,20 @@ def run_case(
         }
 
     text = response_text(response)
-    parsed, validation_error = parse_synthesis_response(text, evidence_ids)
+    response_value = response_payload(response)
+    parsed, validation_error = parse_synthesis_response(
+        response_value, evidence_ids,
+    )
     parse_error = None
     contract_error = None
     if validation_error:
-        try:
-            json.loads(text.strip())
-        except json.JSONDecodeError:
-            parse_error = validation_error
+        if isinstance(response_value, str):
+            try:
+                json.loads(response_value.strip())
+            except json.JSONDecodeError:
+                parse_error = validation_error
+            else:
+                contract_error = validation_error
         else:
             contract_error = validation_error
     return {

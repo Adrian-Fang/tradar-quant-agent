@@ -3,7 +3,8 @@
 Answer the user request using the supplied conversational context for continuity
 and the supplied evidence items for factual support.
 
-Return JSON only with exactly these fields:
+Return exactly one `submit_synthesized_answer` tool call. Its arguments must be
+one JSON object with exactly these fields:
 
 ```json
 {

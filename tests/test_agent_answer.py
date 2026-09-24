@@ -6,7 +6,12 @@ import unittest
 from unittest.mock import patch
 
 from agent.answer.eval import CASES, FixtureClient, _prompt, run_case, run_eval, score_case
-from agent.answer.synthesizer import parse_synthesis_response, synthesize_answer
+from agent.answer.synthesizer import (
+    SYNTHESIS_TOOL_NAME,
+    SYNTHESIS_TOOL_SCHEMA,
+    parse_synthesis_response,
+    synthesize_answer,
+)
 
 
 EVIDENCE = [{"id": "e1", "text": "The result is positive."}]
@@ -71,6 +76,42 @@ class AnswerSynthesisTests(unittest.TestCase):
         )
         self.assertIsNotNone(parsed)
         self.assertIsNotNone(error)
+
+    def test_deepseek_normalized_function_call_is_parsed_without_output_text(self):
+        expected = response(answer="The result is positive.")
+
+        class DeepSeekStyleClient:
+            def __init__(self):
+                self.calls = []
+
+            def create(self, payload):
+                self.calls.append(payload)
+                return {
+                    "output_text": "",
+                    "output": [{
+                        "type": "function_call",
+                        "name": SYNTHESIS_TOOL_NAME,
+                        "arguments": json.dumps(expected),
+                    }],
+                }
+
+        client = DeepSeekStyleClient()
+        result = synthesize_answer("What happened?", EVIDENCE, client=client)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["result"], expected)
+        self.assertEqual(client.calls[0]["tools"], [SYNTHESIS_TOOL_SCHEMA])
+        self.assertEqual(client.calls[0]["tool_choice"], "required")
+
+    def test_malformed_freeform_provider_text_remains_fail_closed(self):
+        result = synthesize_answer(
+            "What happened?", EVIDENCE,
+            client=FakeClient(output="Here is the answer, without structured JSON."),
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["error_type"], "malformed_response")
+        self.assertIn("not valid JSON", result["error"])
 
     def test_runtime_success_and_insufficient_evidence(self):
         for status in ("success", "insufficient_evidence"):
@@ -162,7 +203,7 @@ class AnswerSynthesisTests(unittest.TestCase):
     def test_content_and_evidence_mismatch_fails(self):
         case = CASES[0]
         outcome = run_case(case, client=FixtureClient(case), model="fixture")
-        actual = json.loads(outcome["response_text"])
+        actual = dict(outcome["parsed"])
         actual["answer"] = "An unsupported invented answer."
         row = score_case(case, {
             **outcome,
