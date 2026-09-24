@@ -107,8 +107,8 @@ TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
         "description": (
             "Request one custom research experiment when the existing deterministic "
             "tools cannot answer the request. Supply a structured research spec, "
-            "never Python source or internal artifact paths. Execution may be "
-            "unavailable when no isolated executor is configured."
+            "never Python source or internal artifact paths. Execution requires "
+            "Linux user-namespace isolation and the configured canonical data directory."
         ),
         "parameters": {
             "type": "object",

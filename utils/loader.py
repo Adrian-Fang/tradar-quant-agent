@@ -6,7 +6,7 @@ import pandas as pd
 from utils.duckdb_manager import get_conn, DB_PATH, DATA_PATH
 from pathlib import Path
 
-CACHE_DIR = DATA_PATH / "cache"
+CACHE_DIR = Path(os.environ.get("TRADAR_CACHE_DIR", DATA_PATH / "cache")).expanduser()
 CACHE_PATH = CACHE_DIR / "cum_factor.parquet"
 
 INDEX_CODE_ALIASES = {

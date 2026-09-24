@@ -38,12 +38,19 @@ EXPERIMENT_PROVENANCE_FIELDS = {
     "source_sha256",
     "manifest_version",
     "repo_revision",
+    "worktree_fingerprint",
     "actual_data_bounds",
     "validation_status",
 }
 VALIDATION_STATUS_FIELDS = {"authoring", "source", "result", "execution"}
 VALIDATION_STATES = {"passed", "failed", "not_run", "unavailable"}
 CAPABILITY_MANIFEST = load_json_value("experiment_capabilities.json")
+EXPERIMENT_ARTIFACT_DIR = Path(
+    os.environ.get(
+        "TRADAR_EXPERIMENT_ARTIFACT_DIR",
+        REPO_ROOT / ".runtime" / "experiments",
+    )
+).expanduser()
 EXPERIMENT_RESULT_SCHEMA = CAPABILITY_MANIFEST["result_schema"]
 EXPERIMENT_RESULT_FIELDS = set(EXPERIMENT_RESULT_SCHEMA["required"])
 AUTHORING_PROMPT = load_prompt("prompts/experiment_authoring.md")
@@ -283,6 +290,13 @@ def validate_experiment_provenance(
     for field in ("manifest_version", "repo_revision"):
         if not isinstance(value[field], str) or not value[field]:
             return None, f"provenance.{field} must be a non-empty string"
+    fingerprint = value["worktree_fingerprint"]
+    if (
+        not isinstance(fingerprint, str)
+        or len(fingerprint) != 64
+        or any(char not in "0123456789abcdef" for char in fingerprint)
+    ):
+        return None, "provenance.worktree_fingerprint must be a lowercase SHA-256"
     return dict(value), None
 
 
@@ -304,6 +318,50 @@ def _repo_revision() -> str:
     except (OSError, ValueError):
         pass
     return "unknown"
+
+
+def _worktree_fingerprint(repo_root: Path = REPO_ROOT) -> str:
+    paths = [
+        path
+        for directory in ("agent", "research", "utils")
+        for path in (repo_root / directory).rglob("*.py")
+    ]
+    paths.extend([
+        repo_root / "resources/experiment_capabilities.json",
+        repo_root / "resources/prompts/experiment_authoring.md",
+    ])
+    digest = hashlib.sha256()
+    for path in sorted(path for path in paths if path.is_file()):
+        digest.update(path.relative_to(repo_root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _persist_program(program: str, source_sha256: str) -> None:
+    """Retain source privately by hash; runtime envelopes contain no source text."""
+    directory = EXPERIMENT_ARTIFACT_DIR
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(directory, 0o700)
+    path = directory / f"{source_sha256}.py"
+    content = program.encode("utf-8")
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        if path.is_symlink() or not path.is_file() or path.read_bytes() != content:
+            raise OSError("experiment source artifact does not match its content hash")
+        os.chmod(path, 0o600)
+        return
+    with os.fdopen(descriptor, "wb") as artifact:
+        artifact.write(content)
+        artifact.flush()
+        os.fsync(artifact.fileno())
+    directory_fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def _validate_program_source(program: Any) -> str | None:
@@ -488,6 +546,7 @@ def author_experiment(
         "source_sha256": hashlib.sha256(program.encode("utf-8")).hexdigest(),
         "manifest_version": CAPABILITY_MANIFEST["version"],
         "repo_revision": _repo_revision(),
+        "worktree_fingerprint": _worktree_fingerprint(),
         "actual_data_bounds": None,
         "validation_status": {
             "authoring": "passed",
@@ -508,6 +567,11 @@ def author_experiment(
 def _isolation_config(root: Path, data_path: Path) -> dict[str, Any]:
     python_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
     venv_lib = Path(sys.prefix) / "lib"
+    data_entries = [
+        name
+        for name in ("tradar.duckdb", "tradar.duckdb.wal")
+        if (data_path / name).is_file() and not (data_path / name).is_symlink()
+    ]
     return {
         "root": str(root),
         "work_path": str(root.parent / "workspace"),
@@ -516,11 +580,7 @@ def _isolation_config(root: Path, data_path: Path) -> dict[str, Any]:
         "research_path": str(REPO_ROOT / "research"),
         "utils_path": str(REPO_ROOT / "utils"),
         "data_path": str(data_path),
-        "data_entries": [
-            path.name
-            for path in data_path.iterdir()
-            if not path.name.startswith(".env")
-        ],
+        "data_entries": data_entries,
         "python_path": [
             "/app",
             f"/usr/lib/{python_version}",
@@ -529,6 +589,7 @@ def _isolation_config(root: Path, data_path: Path) -> dict[str, Any]:
         ],
         "environment": {
             "DATA_PATH": "/data",
+            "TRADAR_CACHE_DIR": "/work/cache",
             "HOME": "/work",
             "TMPDIR": "/work",
             "PYTHONNOUSERSITE": "1",
@@ -580,18 +641,12 @@ def _execute_isolated_source(
             "error_type": "experiment_unavailable",
             "message": "unshare isolation or canonical DATA_PATH is unavailable",
         }
-    if any(path.parent != selected_data for path in selected_data.rglob(".env*")):
-        return {
-            "status": "error",
-            "error_type": "experiment_unavailable",
-            "message": "nested dotenv files cannot be safely mounted",
-        }
-
     with tempfile.TemporaryDirectory(prefix="tradar-experiment-") as directory:
         run_dir = Path(directory)
         root = run_dir / "root"
         venv_lib = Path(sys.prefix) / "lib"
         _prepare_root(root, venv_lib)
+        (run_dir / "workspace/cache").mkdir(mode=0o700)
         (run_dir / "workspace/experiment.py").write_text(program, encoding="utf-8")
         config = _isolation_config(root, selected_data.resolve())
         config["limits"]["memory_bytes"] = memory_bytes
@@ -707,6 +762,7 @@ def run_research_experiment(
         "source_sha256": None,
         "manifest_version": CAPABILITY_MANIFEST["version"],
         "repo_revision": _repo_revision(),
+        "worktree_fingerprint": _worktree_fingerprint(),
         "actual_data_bounds": None,
         "validation_status": {
             "authoring": "not_run",
@@ -726,6 +782,11 @@ def run_research_experiment(
         provenance_error = "authored program does not match provenance.source_sha256"
     _, contract_error = validate_experiment_provenance(provenance)
     provenance_error = provenance_error or contract_error
+    if (
+        not provenance_error
+        and provenance["worktree_fingerprint"] != _worktree_fingerprint()
+    ):
+        provenance_error = "research worktree changed after experiment authoring"
     if provenance_error:
         return ToolResult.error(
             "run_research_experiment",
@@ -734,6 +795,27 @@ def run_research_experiment(
             provenance_error,
             run_id=run_id,
             provenance={"module": "agent.tools.experiment"},
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+        )
+
+    try:
+        _persist_program(authored_program, provenance["source_sha256"])
+    except OSError as exc:
+        provenance["validation_status"] = {
+            **provenance["validation_status"],
+            "execution": "unavailable",
+        }
+        return ToolResult.error(
+            "run_research_experiment",
+            normalized_args,
+            "experiment_artifact_unavailable",
+            f"could not retain experiment source: {type(exc).__name__}: {exc}",
+            run_id=run_id,
+            provenance={
+                "module": "agent.tools.experiment",
+                "executor": "unshare-chroot-v1",
+                **provenance,
+            },
             elapsed_ms=(time.perf_counter() - started) * 1000,
         )
 
@@ -808,6 +890,10 @@ def run_research_experiment(
             "executor": "unshare-chroot-v1",
             **provenance,
         },
+        artifacts=[{
+            "kind": "experiment_source",
+            "id": f"sha256:{provenance['source_sha256']}",
+        }],
         timing={"elapsed_ms": round((time.perf_counter() - started) * 1000, 3)},
     )
 

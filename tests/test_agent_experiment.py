@@ -4,10 +4,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 from unittest.mock import patch
 
+import duckdb
+
+import agent.tools.experiment as experiment_module
 from agent.agent import run_agent
 from agent.tools.calling import TOOL_SCHEMAS
 from agent.tools.experiment import (
@@ -92,6 +96,16 @@ class Client:
 
 
 class ExperimentArchitectureTests(unittest.TestCase):
+    def setUp(self):
+        artifact_temp = tempfile.TemporaryDirectory()
+        self.addCleanup(artifact_temp.cleanup)
+        self.artifact_dir = Path(artifact_temp.name) / "experiments"
+        artifact_patch = patch.object(
+            experiment_module, "EXPERIMENT_ARTIFACT_DIR", self.artifact_dir
+        )
+        artifact_patch.start()
+        self.addCleanup(artifact_patch.stop)
+
     def test_schema_uses_structured_spec_without_source(self):
         schema = next(item for item in TOOL_SCHEMAS if item["name"] == "run_research_experiment")
 
@@ -214,6 +228,102 @@ class ExperimentArchitectureTests(unittest.TestCase):
         )
         self.assertEqual(result.provenance["validation_status"]["result"], "passed")
         self.assertNotIn("program", json.dumps(result.normalized_args))
+        artifact_id = result.artifacts[0]["id"]
+        artifact_path = self.artifact_dir / f"{result.provenance['source_sha256']}.py"
+        self.assertEqual(artifact_id, f"sha256:{result.provenance['source_sha256']}")
+        self.assertEqual(artifact_path.read_text(encoding="utf-8"), authored["program"])
+        self.assertEqual(stat.S_IMODE(artifact_path.stat().st_mode), 0o600)
+        self.assertNotIn(authored["program"], result.to_json())
+
+    def test_source_artifact_failure_stops_before_execution(self):
+        authored = author_experiment("request", spec(), client=Client({"program": PROGRAM}))
+        with tempfile.TemporaryDirectory() as data_path, patch.dict(
+            os.environ, {"DATA_PATH": data_path}
+        ), patch.object(
+            experiment_module, "_persist_program", side_effect=OSError("read-only")
+        ), patch.object(experiment_module, "_execute_isolated_source") as execute:
+            result = run_research_experiment(
+                spec(),
+                authored_program=authored["program"],
+                authoring_provenance=authored["provenance"],
+            )
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.errors[0]["code"], "experiment_artifact_unavailable")
+        execute.assert_not_called()
+
+    def test_dirty_research_source_changes_worktree_fingerprint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "research/panel.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("def value(): return 1\n", encoding="utf-8")
+            before = experiment_module._worktree_fingerprint(root)
+            source.write_text("def value(): return 2\n", encoding="utf-8")
+            after = experiment_module._worktree_fingerprint(root)
+
+        self.assertNotEqual(before, after)
+
+    def test_sandbox_exposes_canonical_loader_but_not_other_data_files(self):
+        source = (
+            "import pandas as pd\n"
+            "from utils.loader import load_index, load_prices\n\n"
+            "def run():\n"
+            "    try:\n"
+            "        pd.read_csv('/data/credentials.csv')\n"
+            "        secret_file_visible = True\n"
+            "    except FileNotFoundError:\n"
+            "        secret_file_visible = False\n"
+            "    index = load_index('000300', '2025-01-02', '2025-01-02')\n"
+            "    prices = load_prices('2025-01-02', '2025-01-02', "
+            "adjust='backward', symbols=['000001'], fields=['close'])\n"
+            "    return {'assumptions': [], 'method': {'type': 'read_surface'}, "
+            "'data_coverage': {'actual_start': None, 'actual_end': None}, "
+            "'metrics': {'secret_file_visible': secret_file_visible, "
+            "'index_close': float(index.iloc[0]), "
+            "'stock_close': float(prices.iloc[0]['close'])}, "
+            "'sample_counts': {'prices': len(prices)}, 'warnings': []}\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            data_path = Path(directory)
+            (data_path / "credentials.csv").write_text(
+                "secret\nnot-for-agent\n", encoding="utf-8"
+            )
+            connection = duckdb.connect(str(data_path / "tradar.duckdb"))
+            try:
+                connection.execute(
+                    "CREATE TABLE market_index(symbol VARCHAR, date DATE, close DOUBLE)"
+                )
+                connection.execute(
+                    "INSERT INTO market_index VALUES ('000300', '2025-01-02', 3000)"
+                )
+                connection.execute(
+                    "CREATE TABLE history(symbol VARCHAR, date DATE, open DOUBLE, "
+                    "high DOUBLE, low DOUBLE, close DOUBLE, volume DOUBLE, amount DOUBLE)"
+                )
+                connection.execute(
+                    "INSERT INTO history VALUES "
+                    "('000001', '2025-01-02', 10, 10, 10, 10, 100, 1000)"
+                )
+                connection.execute(
+                    "CREATE TABLE ex_factors(symbol VARCHAR, date DATE, ex_factor DOUBLE)"
+                )
+                connection.execute(
+                    "INSERT INTO ex_factors VALUES ('000001', '2025-01-02', 1)"
+                )
+            finally:
+                connection.close()
+
+            result = _execute_isolated_source(source, data_path=data_path)
+
+            self.assertFalse((data_path / "cache").exists())
+
+        self.assertEqual(result["status"], "success", result)
+        self.assertEqual(result["result"]["metrics"], {
+            "secret_file_visible": False,
+            "index_close": 3000.0,
+            "stock_close": 10.0,
+        })
 
     def test_result_and_provenance_contracts_validate(self):
         normalized_spec, spec_error = validate_experiment_spec(spec())
@@ -315,6 +425,13 @@ class ExperimentArchitectureTests(unittest.TestCase):
         self.assertEqual(
             result["research_run"].steps[0]["provenance"]["source_sha256"],
             hashlib.sha256(EVENT_PROGRAM.encode()).hexdigest(),
+        )
+        self.assertEqual(
+            result["research_run"].steps[0]["artifacts"],
+            [{
+                "kind": "experiment_source",
+                "id": f"sha256:{hashlib.sha256(EVENT_PROGRAM.encode()).hexdigest()}",
+            }],
         )
         public = json.dumps(result, ensure_ascii=False, default=str)
         self.assertNotIn("def run", public)

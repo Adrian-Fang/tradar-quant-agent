@@ -2,7 +2,7 @@
   "cases": [
     {
       "id": "capability-research-tools",
-      "text": "当前 Agent 可调用的稳定研究工具包括 inspect_universe（检查 canonical A 股 universe 与交易执行 masks）、evaluate_factor（评估已有 factor 的 IC、分组诊断与年度稳定性）和 run_backtest（使用已有 artifacts 运行 canonical T+1 vector backtest）。对于这些工具无法覆盖的一次性研究，Agent 可以生成结构化实验规格并通过版本化 canonical API manifest 单独 author 程序；当前尚未配置真正的隔离执行器，因此实验执行会 fail closed 为 experiment_unavailable。"
+      "text": "当前 Agent 可调用 inspect_universe、evaluate_factor、run_backtest，以及有界的一次性本地研究实验。实验由结构化规格驱动，程序仅能使用版本化 manifest 中的研究 API，在 Linux user/mount/network namespace 与只读根文件系统中运行；没有网络或 shell，host 环境密钥不会传入，源代码树不会写入。需要 Linux unshare 隔离能力和已配置的 canonical DATA_PATH；sandbox 只挂载 canonical DuckDB 文件及可选 WAL sidecar，不暴露数据目录中的其他文件。复权缓存写入每次运行的临时工作区。生成源码私下按 SHA-256 保留，不会放入用户答案。Tradar 不执行实盘交易或真实资金订单。"
     },
     {
       "id": "capability-research-engine",
