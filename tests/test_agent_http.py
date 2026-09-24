@@ -67,10 +67,66 @@ class AgentHTTPTests(unittest.IsolatedAsyncioTestCase):
             "Inspect the universe.", provider="deepseek", retrieval="none"
         )
 
+    async def test_history_is_passed_as_structured_bounded_context(self):
+        result = {
+            "status": "ok",
+            "observed": {"outcome": {"status": "no_action"}, "steps": []},
+            "telemetry": {"summary": {}},
+        }
+        with patch("agent.http.run_request", return_value=result) as run, patch(
+            "agent.http.asyncio.to_thread", new=self.call_in_test
+        ):
+            response = await self.request(
+                "POST",
+                "/v1/research",
+                json={
+                    "message": "那 2026 年呢？",
+                    "history": [
+                        {"role": "user", "content": "研究 high52 在 2025 年的表现。"},
+                        {"role": "assistant", "content": "请提供具体区间。"},
+                    ],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        run.assert_called_once_with(
+            "那 2026 年呢？",
+            provider="deepseek",
+            retrieval="none",
+            history=[
+                {"role": "user", "content": "研究 high52 在 2025 年的表现。"},
+                {"role": "assistant", "content": "请提供具体区间。"},
+            ],
+        )
+
     async def test_missing_or_invalid_message_is_rejected(self):
         for payload in ({}, {"message": "   "}, {"message": 42}, []):
             with self.subTest(payload=payload):
                 response = await self.request("POST", "/v1/research", json=payload)
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json()["error_type"], "invalid_request")
+
+    async def test_history_validation_is_strict_and_bounded(self):
+        invalid = [
+            {"history": None},
+            {"history": [{"role": "system", "content": "x"}]},
+            {"history": [{"role": "user", "content": "   "}]},
+            {"history": [{"role": "user", "content": 1}]},
+            {"history": [{"role": "user", "content": "x", "extra": "y"}]},
+            {"history": [{"role": "user", "content": "x"}] * 13},
+            {"history": [{"role": "user", "content": "x" * 4001}]},
+            {"history": [
+                {"role": "user", "content": "x" * 4000},
+                {"role": "assistant", "content": "x" * 4000},
+                {"role": "user", "content": "x" * 4000},
+                {"role": "assistant", "content": "y"},
+            ]},
+        ]
+        for payload in invalid:
+            with self.subTest(payload=payload):
+                response = await self.request(
+                    "POST", "/v1/research", json={"message": "follow up", **payload}
+                )
                 self.assertEqual(response.status_code, 400)
                 self.assertEqual(response.json()["error_type"], "invalid_request")
 

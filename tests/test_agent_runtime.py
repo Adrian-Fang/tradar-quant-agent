@@ -111,6 +111,44 @@ class AgentRuntimeTests(unittest.TestCase):
                 self.assertEqual(hitl.calls, [])
                 self.assertEqual(calls, [])
 
+    def test_meta_no_action_returns_grounded_capability_answer_without_tools(self):
+        planner, hitl, _, = self.clients(
+            planner_output=plan("no_action"),
+        )
+        result = run_agent(
+            "你有哪些数据，数据质量怎么样？",
+            planner_client=planner,
+            hitl_client=hitl,
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["observed"]["outcome"], {"status": "success"})
+        self.assertTrue(result["answer"])
+        self.assertIn("没有统一的 data-quality aggregate score", result["answer"])
+        self.assertNotIn("质量评分为", result["answer"])
+        self.assertIsNone(result["research_run"])
+        self.assertEqual(result["observed"]["steps"], [])
+        self.assertTrue(result["grounding"]["fully_grounded"])
+        self.assertEqual(hitl.calls, [])
+
+    def test_conversation_history_reaches_planner_as_history_items(self):
+        planner, hitl, _, = self.clients(
+            planner_output=plan("no_action"),
+        )
+        result = run_agent(
+            "那 2026 年呢？",
+            planner_client=planner,
+            hitl_client=hitl,
+            conversation_history=[
+                {"role": "user", "content": "研究 high52 在 2025 年的表现。"},
+            ],
+        )
+
+        self.assertEqual(result["status"], "ok")
+        planning_input = json.loads(planner.calls[0]["input"])
+        self.assertIn("conversation-1", planning_input["user_request"])
+        self.assertIn("high52", planning_input["user_request"])
+
     def test_planner_error_is_returned_without_execution(self):
         planner, hitl, _, = self.clients()
         planner.error = RuntimeError("offline")

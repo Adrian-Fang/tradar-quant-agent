@@ -1,6 +1,7 @@
 # Answer Synthesis
 
-Answer the user request using only the supplied evidence items.
+Answer the user request using the supplied conversational context for continuity
+and the supplied evidence items for factual support.
 
 Return JSON only with exactly these fields:
 
@@ -25,6 +26,13 @@ item to explain the evidence gap, cite that item; otherwise use an empty list.
 For a multi-evidence answer, cite each item only when it contributes a material
 fact to the answer.
 
+`conversation_context` contains bounded prior user and assistant messages. Use
+it only to resolve references such as "compared with the previous result" and
+to preserve conversational continuity. It is not evidence: prior assistant
+claims are not factual proof, must not be copied into `evidence_ids`, and must
+not replace or supplement the supplied research evidence. New factual claims
+must be supported by the current evidence items.
+
 Separate directly observed facts from interpretation. Do not add qualitative
 threshold judgments such as sufficient, large, small, strong, or weak unless
 the evidence itself states that judgment or an explicit supplied rubric defines
@@ -43,6 +51,12 @@ Input contains only:
 ```json
 {
   "user_request": "...",
+  "conversation_context": [
+    {"role": "user|assistant", "content": "..."}
+  ],
   "evidence": [{"id": "e1", "text": "..."}]
 }
 ```
+
+`conversation_context` may be an empty array or may be omitted for a new
+single-turn request.

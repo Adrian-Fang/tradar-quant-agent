@@ -11,7 +11,7 @@ from starlette.responses import JSONResponse
 from starlette.applications import Starlette
 from starlette.routing import Route
 
-from .main import run_request
+from .main import run_request, validate_history
 
 
 _request_lock = Lock()
@@ -61,6 +61,20 @@ async def research(request: Request) -> JSONResponse:
             status_code=400,
         )
 
+    history = None
+    if "history" in payload:
+        try:
+            history = validate_history(payload["history"])
+        except ValueError as exc:
+            return JSONResponse(
+                {
+                    "status": "error",
+                    "error_type": "invalid_request",
+                    "error": str(exc),
+                },
+                status_code=400,
+            )
+
     if not _request_lock.acquire(blocking=False):
         return JSONResponse(
             {
@@ -80,12 +94,10 @@ async def research(request: Request) -> JSONResponse:
         )
 
     try:
-        result = await asyncio.to_thread(
-            run_request,
-            message,
-            provider="deepseek",
-            retrieval="none",
-        )
+        run_options = {"provider": "deepseek", "retrieval": "none"}
+        if history is not None:
+            run_options["history"] = history
+        result = await asyncio.to_thread(run_request, message, **run_options)
         return JSONResponse(_runtime_view(result))
     except Exception as exc:
         return JSONResponse(

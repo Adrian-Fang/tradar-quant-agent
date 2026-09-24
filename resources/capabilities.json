@@ -1,0 +1,28 @@
+{
+  "cases": [
+    {
+      "id": "capability-research-tools",
+      "text": "当前 Agent 可调用的稳定研究工具包括 inspect_universe（检查 canonical A 股 universe 与交易执行 masks）、evaluate_factor（评估已有 factor 的 IC、分组诊断与年度稳定性）和 run_backtest（使用已有 artifacts 运行 canonical T+1 vector backtest）。"
+    },
+    {
+      "id": "capability-research-engine",
+      "text": "research/ 是确定性的量化研究 engine，覆盖 universe/tradability、factor evaluation、metrics 与 backtest 等已落地能力；新的实验性研究仍可能需要 scripts/。"
+    },
+    {
+      "id": "capability-retrieval",
+      "text": "当前支持 Research Record 的 lexical/semantic retrieval、relevance verification，以及可选的 verified retrieval runtime；启用 semantic retrieval 时需要相应 embedding 配置。"
+    },
+    {
+      "id": "capability-agent-runtime",
+      "text": "Agent runtime 已支持 bounded loop、ResearchRun state、planning、HITL gate、工具执行、bounded evidence、answer synthesis、grounding 和 telemetry。"
+    },
+    {
+      "id": "capability-data-quality-boundary",
+      "text": "当前没有统一的 data-quality aggregate score 或固定质量报告；具体研究仍需按数据覆盖、PIT、tradability、benchmark 对齐和实际研究输出逐项检查。"
+    },
+    {
+      "id": "capability-product-boundaries",
+      "text": "Tradar 不执行 live trading 或 real-money orders；memory recall 不会自动注入 context，HITL approval 尚未接 executor resume，retry/replan 也不属于当前默认 runtime。"
+    }
+  ]
+}

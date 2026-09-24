@@ -18,14 +18,18 @@ def build_synthesis_payload(
     evidence: list[dict[str, str]],
     *,
     model: str = "",
+    conversation_history: list[dict[str, str]] | None = None,
 ) -> dict[str, str]:
+    input_data = {
+        "user_request": user_request,
+        "evidence": evidence,
+    }
+    if conversation_history is not None:
+        input_data["conversation_context"] = conversation_history
     return {
         "model": model,
         "instructions": PROMPT,
-        "input": json.dumps({
-            "user_request": user_request,
-            "evidence": evidence,
-        }, ensure_ascii=False),
+        "input": json.dumps(input_data, ensure_ascii=False),
     }
 
 
@@ -73,6 +77,7 @@ def synthesize_answer(
     *,
     client: Any,
     model: str = "",
+    conversation_history: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(user_request, str) or not user_request.strip():
         raise ValueError("user_request must be a non-empty string")
@@ -93,7 +98,10 @@ def synthesize_answer(
 
     try:
         response = client.create(build_synthesis_payload(
-            user_request, evidence, model=model,
+            user_request,
+            evidence,
+            model=model,
+            conversation_history=conversation_history,
         ))
     except Exception as exc:
         return {

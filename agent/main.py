@@ -24,6 +24,37 @@ DEFAULT_MODELS = {
 DEFAULT_PRODUCT_BOUNDARIES = [
     "Tradar does not execute live trading or place real-money orders.",
 ]
+MAX_HISTORY_MESSAGES = 12
+MAX_HISTORY_MESSAGE_CHARS = 4000
+MAX_HISTORY_CHARS = 12000
+
+
+def validate_history(history: Any) -> list[dict[str, str]]:
+    if not isinstance(history, list):
+        raise ValueError("history must be an array")
+    if len(history) > MAX_HISTORY_MESSAGES:
+        raise ValueError(f"history cannot contain more than {MAX_HISTORY_MESSAGES} messages")
+
+    normalized = []
+    total_chars = 0
+    for item in history:
+        if not isinstance(item, dict) or set(item) != {"role", "content"}:
+            raise ValueError("each history item must contain only role and content")
+        if item["role"] not in {"user", "assistant"}:
+            raise ValueError("history role must be user or assistant")
+        content = item["content"]
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("history content must be a non-empty string")
+        content = content.strip()
+        if len(content) > MAX_HISTORY_MESSAGE_CHARS:
+            raise ValueError(
+                f"each history message cannot exceed {MAX_HISTORY_MESSAGE_CHARS} characters"
+            )
+        total_chars += len(content)
+        if total_chars > MAX_HISTORY_CHARS:
+            raise ValueError(f"history cannot exceed {MAX_HISTORY_CHARS} characters")
+        normalized.append({"role": item["role"], "content": content})
+    return normalized
 
 
 def create_provider_client(provider: str, *, api_key: str | None = None) -> Any:
@@ -52,6 +83,7 @@ def run_request(
     client: Any | None = None,
     embedding_client: Any | None = None,
     api_key: str | None = None,
+    history: list[dict[str, str]] | None = None,
     **run_options: Any,
 ) -> dict[str, Any]:
     """Run one request through the existing integrated Agent runtime."""
@@ -61,6 +93,8 @@ def run_request(
         raise ValueError(f"unsupported retrieval mode: {retrieval}")
     if provider == "fixture" and client is None:
         raise ValueError("fixture provider requires an injected client")
+    if history is not None:
+        history = validate_history(history)
 
     product_boundaries = run_options.pop(
         "product_boundaries", DEFAULT_PRODUCT_BOUNDARIES
@@ -83,6 +117,9 @@ def run_request(
             else OpenAIEmbeddingClient()
         )
 
+    runtime_options = dict(run_options)
+    if history is not None:
+        runtime_options["conversation_history"] = history
     return run_agent(
         user_request,
         planner_client=client,
@@ -93,7 +130,7 @@ def run_request(
         semantic_embedder=semantic_embedder,
         model=model,
         product_boundaries=product_boundaries,
-        **run_options,
+        **runtime_options,
     )
 
 
@@ -193,4 +230,5 @@ __all__ = [
     "format_json",
     "main",
     "run_request",
+    "validate_history",
 ]

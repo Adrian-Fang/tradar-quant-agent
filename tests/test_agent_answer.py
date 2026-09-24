@@ -98,6 +98,20 @@ class AnswerSynthesisTests(unittest.TestCase):
         body = json.loads(client.calls[0]["input"])
         self.assertEqual(set(body), {"user_request", "evidence"})
 
+    def test_runtime_prompt_keeps_history_separate_from_evidence(self):
+        history = [{"role": "assistant", "content": "2025 年的结果是 20。"}]
+        client = FakeClient(output=response())
+        synthesize_answer(
+            "和刚才相比呢？",
+            EVIDENCE,
+            conversation_history=history,
+            client=client,
+        )
+        body = json.loads(client.calls[0]["input"])
+        self.assertEqual(body["conversation_context"], history)
+        self.assertEqual(body["evidence"], EVIDENCE)
+        self.assertNotIn(history[0]["content"], json.dumps(body["evidence"], ensure_ascii=False))
+
     def test_prompt_rejects_unsupported_qualitative_and_recommendation_overreach(self):
         prompt = _prompt(CASES[0])["instructions"]
         self.assertIn("Separate directly observed facts from interpretation", prompt)

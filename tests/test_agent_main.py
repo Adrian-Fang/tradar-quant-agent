@@ -68,6 +68,12 @@ class AgentMainTests(unittest.TestCase):
             )
         self.assertIs(run.call_args.kwargs["product_boundaries"], boundaries)
 
+    def test_history_is_forwarded_to_agent_as_conversation_context(self):
+        history = [{"role": "user", "content": "研究 2025 年。"}]
+        with patch("agent.main.run_agent", return_value={"status": "ok"}) as run:
+            run_request("那 2026 年呢？", provider="fixture", client=Mock(), history=history)
+        self.assertEqual(run.call_args.kwargs["conversation_history"], history)
+
     def test_default_boundary_blocks_live_trade_before_model_or_tools(self):
         client = Mock()
         result = run_request(

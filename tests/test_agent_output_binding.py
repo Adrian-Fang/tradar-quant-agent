@@ -66,7 +66,15 @@ class AgentOutputBindingTests(unittest.TestCase):
         grounding_client = Client(grounding) if grounding is not None else None
         return planner, hitl, synthesis_client, grounding_client, tool_status
 
-    def run_request(self, *, steps=None, synthesis=None, grounding=None, tool_status="success"):
+    def run_request(
+        self,
+        *,
+        steps=None,
+        synthesis=None,
+        grounding=None,
+        tool_status="success",
+        conversation_history=None,
+    ):
         planner, hitl, synthesis_client, grounding_client, tool_status = self.clients(
             steps=steps,
             synthesis=synthesis,
@@ -84,6 +92,7 @@ class AgentOutputBindingTests(unittest.TestCase):
                 synthesis_client=synthesis_client,
                 grounding_client=grounding_client,
                 run_id="run-output-binding",
+                conversation_history=conversation_history,
             )
         return result, planner, hitl, synthesis_client, grounding_client, calls
 
@@ -195,6 +204,41 @@ class AgentOutputBindingTests(unittest.TestCase):
         self.assertEqual(result["observed"]["outcome"], {"status": "blocked"})
         self.assertFalse(result["grounding"]["fully_grounded"])
         self.assertEqual(len(ground.calls), 1)
+
+    def test_follow_up_history_reaches_synthesis_but_not_grounding_evidence(self):
+        history = [{
+            "role": "assistant",
+            "content": "2025 年检查结果为 20 个标的。",
+        }]
+        result, _, _, synth, ground, _ = self.run_request(
+            synthesis={
+                "status": "success",
+                "answer": "和上一年相比，2026 年当前检查得到的数量是 12。",
+                "evidence_ids": ["step-1-inspect_universe"],
+            },
+            grounding={
+                "answer": "ignored",
+                "claims": [{
+                    "claim": "The 2026 inspected count was 12.",
+                    "evidence_ids": ["step-1-inspect_universe"],
+                    "grounding": "supported",
+                }],
+            },
+            conversation_history=history,
+        )
+
+        synthesis_input = json.loads(synth.calls[0]["input"])
+        grounding_input = json.loads(ground.calls[0]["input"])
+        self.assertEqual(synthesis_input["conversation_context"], history)
+        self.assertEqual(
+            [item["id"] for item in grounding_input["evidence"]],
+            ["step-1-inspect_universe"],
+        )
+        self.assertNotIn("2025 年检查结果为 20", json.dumps(
+            grounding_input["evidence"], ensure_ascii=False,
+        ))
+        self.assertEqual(result["answer"], "和上一年相比，2026 年当前检查得到的数量是 12。")
+        self.assertTrue(result["grounding"]["fully_grounded"])
 
     def test_execution_error_skips_synthesis(self):
         planner, hitl, synthesis, grounding, _ = self.clients(

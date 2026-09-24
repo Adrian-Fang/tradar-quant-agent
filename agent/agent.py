@@ -12,11 +12,54 @@ from .context.selector import select_context
 from .core.contracts import ResearchRun
 from .core.safety import SafetyClient, check_request_safety, quarantine_untrusted_text
 from .core.telemetry import RunTelemetry, TelemetryClient
+from .core.resources import load_json
 from .grounding.verifier import verify_answer_grounding
 from .hitl.gate import gate_action
 from .loop.runner import run_loop
 from .planning.planner import plan_request
 from .retrieval.relevance_verifier import retrieve_verified
+
+
+CAPABILITY_ITEMS = load_json("capabilities.json")
+_CAPABILITY_MARKERS = (
+    "你能做什么",
+    "你有哪些数据",
+    "支持哪些研究",
+    "可以评估哪些 factor",
+    "可以评估哪些因子",
+    "数据覆盖",
+    "数据质量",
+    "有什么限制",
+    "what can you do",
+    "what data",
+    "data quality",
+    "what are your limitations",
+)
+
+
+def _is_capability_request(user_request: str) -> bool:
+    text = user_request.casefold()
+    return any(marker.casefold() in text for marker in _CAPABILITY_MARKERS)
+
+
+def _capability_answer() -> tuple[str, list[dict[str, str]], dict[str, Any]]:
+    evidence = [{"id": item["id"], "text": item["text"]} for item in CAPABILITY_ITEMS]
+    answer = "当前能力与边界：\n" + "\n".join(
+        f"- {item['text']}" for item in evidence
+    )
+    grounding = {
+        "answer": answer,
+        "claims": [
+            {
+                "claim": item["text"],
+                "evidence_ids": [item["id"]],
+                "grounding": "supported",
+            }
+            for item in evidence
+        ],
+        "fully_grounded": True,
+    }
+    return answer, evidence, grounding
 
 
 def _steps(run: ResearchRun) -> list[dict[str, Any]]:
@@ -282,6 +325,7 @@ def run_agent(
     record_status: str | None = None,
     loop_decider: Any | None = None,
     max_iterations: int = 8,
+    conversation_history: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Run context/retrieval, iterative planning, HITL, execution, synthesis, and grounding."""
     if not isinstance(user_request, str) or not user_request.strip():
@@ -318,6 +362,14 @@ def run_agent(
             safety["events"].append(event)
         else:
             safe_context_items.append(item)
+
+    for index, message in enumerate(conversation_history or [], 1):
+        safe_context_items.append({
+            "id": f"conversation-{index}",
+            "kind": "history",
+            "role": message["role"],
+            "text": message["content"],
+        })
 
     items = [
         {"id": "request_scope", "kind": "current_instruction", "text": user_request},
@@ -440,6 +492,34 @@ def run_agent(
     plan = planned["plan"]
     planning = {"status": plan["status"], "steps": plan["steps"]}
     if plan["status"] != "ready":
+        if plan["status"] == "no_action" and _is_capability_request(user_request):
+            answer, capability_evidence, grounding = _capability_answer()
+            evidence_ids = [item["id"] for item in capability_evidence]
+            return _finish(
+                context_ids=[item["id"] for item in selected],
+                planning=planning,
+                steps=[],
+                retrieval=retrieval_trace,
+                research_run=None,
+                grounding=grounding,
+                grounding_trace={
+                    "fully_grounded": True,
+                    "labels": ["supported"] * len(evidence_ids),
+                },
+                hitl=None,
+                outcome="success",
+                plan=plan,
+                retrieval_result=retrieval_result,
+                answer=answer,
+                evidence=capability_evidence,
+                synthesis={
+                    "status": "success",
+                    "answer": answer,
+                    "evidence_ids": evidence_ids,
+                },
+                safety=safety,
+                telemetry=telemetry,
+            )
         return _finish(
             context_ids=[item["id"] for item in selected],
             planning=planning,
@@ -637,6 +717,7 @@ def run_agent(
                 model=model,
             ),
             model=model,
+            conversation_history=conversation_history,
         )
         if synthesis_result["status"] == "error":
             return _finish(
