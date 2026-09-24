@@ -11,6 +11,44 @@ from ..planning.planner import parse_plan_response
 from ..tools.executor import execute_steps
 
 
+def _compact_observation_value(value: Any, key: str = "") -> Any:
+    if key == "membership" and value is not None:
+        return {"omitted": True}
+    if isinstance(value, Mapping):
+        return {
+            str(item_key): _compact_observation_value(item, str(item_key))
+            for item_key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        limit = 8 if key == "snapshots" else 24
+        if len(value) <= limit:
+            return [_compact_observation_value(item) for item in value]
+        head = limit // 2
+        return {
+            "items": [
+                *(_compact_observation_value(item) for item in value[:head]),
+                *(_compact_observation_value(item) for item in value[-head:]),
+            ],
+            "omitted_count": len(value) - (head * 2),
+        }
+    return value
+
+
+def compact_tool_observation(tool_result: ToolResult) -> dict[str, Any]:
+    """Keep planner facts while excluding large execution-only payloads."""
+    source = tool_result.to_dict()
+    observation = {
+        "tool_name": source["tool_name"],
+        "status": source["status"],
+        "normalized_args": source["normalized_args"],
+        "result": _compact_observation_value(source["result"], "result"),
+    }
+    for field in ("warnings", "errors", "provenance"):
+        if source[field]:
+            observation[field] = _compact_observation_value(source[field], field)
+    return observation
+
+
 def _validate_decision(decision: Mapping[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     if not isinstance(decision, Mapping):
         return None, "loop decision must be an object"
@@ -59,7 +97,7 @@ def _observation(
         "user_request": user_request,
         "iteration": iteration,
         "steps": list(run.steps) if run is not None else [],
-        "observations": [result.to_dict() for result in tool_results],
+        "observations": [compact_tool_observation(result) for result in tool_results],
         "provisional_steps": list(provisional_steps),
     }
 
@@ -76,9 +114,9 @@ def run_loop(
 ) -> dict[str, Any]:
     """Run bounded one-action decisions against one append-only ResearchRun.
 
-    ``decide_next`` receives prior steps and full ToolResult observations. If it
-    is omitted, ``initial_steps`` are consumed as a compatibility path for the
-    existing plan-once runtime.
+    ``decide_next`` receives prior steps and compact planner observations. If
+    it is omitted, ``initial_steps`` are consumed as a compatibility path for
+    the existing plan-once runtime.
     """
     if isinstance(max_iterations, bool) or not isinstance(max_iterations, int) or max_iterations < 1:
         raise ValueError("max_iterations must be a positive integer")
@@ -353,4 +391,4 @@ def run_loop(
     }
 
 
-__all__ = ["run_loop"]
+__all__ = ["compact_tool_observation", "run_loop"]
