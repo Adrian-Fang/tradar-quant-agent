@@ -9,7 +9,7 @@ from typing import Any
 from .answer.synthesizer import synthesize_answer
 from .context.builder import construct_context
 from .context.selector import select_context
-from .core.contracts import ResearchRun
+from .core.contracts import ResearchRun, ToolResult
 from .core.safety import SafetyClient, check_request_safety, quarantine_untrusted_text
 from .core.telemetry import RunTelemetry, TelemetryClient
 from .core.resources import load_json
@@ -18,6 +18,7 @@ from .hitl.gate import gate_action
 from .loop.runner import run_loop
 from .planning.planner import plan_request
 from .retrieval.relevance_verifier import retrieve_verified
+from .tools.experiment import author_experiment, run_research_experiment
 
 
 CAPABILITY_ITEMS = load_json("capabilities.json")
@@ -40,6 +41,12 @@ _CAPABILITY_MARKERS = (
 def _is_capability_request(user_request: str) -> bool:
     text = user_request.casefold()
     return any(marker.casefold() in text for marker in _CAPABILITY_MARKERS)
+
+
+def _clarification_answer(reason: Any) -> str:
+    if isinstance(reason, str) and reason.strip():
+        return reason.strip()
+    return "请补充完成这项研究所需的最少信息。"
 
 
 def _capability_answer() -> tuple[str, list[dict[str, str]], dict[str, Any]]:
@@ -68,6 +75,7 @@ def _steps(run: ResearchRun) -> list[dict[str, Any]]:
             "name": step["tool_name"],
             "arguments": step["normalized_args"],
             "status": step["status"],
+            "provenance": step.get("provenance", {}),
         }
         for step in run.steps
     ]
@@ -190,8 +198,12 @@ def tool_results_to_evidence(tool_results: list[Any]) -> list[dict[str, str]]:
     for seq, tool_result in enumerate(tool_results, 1):
         if tool_result.status not in {"success", "partial"}:
             continue
+        source = tool_result.to_dict()
+        value = _bounded_tool_output(tool_result.tool_name, source["result"])
+        if tool_result.tool_name == "run_research_experiment":
+            value = {"result": value, "provenance": source["provenance"]}
         text = json.dumps(
-            _bounded_tool_output(tool_result.tool_name, tool_result.to_dict()["result"]),
+            value,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -305,6 +317,7 @@ def run_agent(
     user_request: str,
     *,
     planner_client: Any,
+    experiment_authoring_client: Any | None = None,
     hitl_client: Any | None = None,
     synthesis_client: Any | None = None,
     grounding_client: Any | None = None,
@@ -531,6 +544,11 @@ def run_agent(
             outcome=plan["status"],
             plan=plan,
             retrieval_result=retrieval_result,
+            answer=(
+                _clarification_answer(plan["reason"])
+                if plan["status"] == "needs_input"
+                else None
+            ),
             safety=safety,
             telemetry=telemetry,
         )
@@ -568,6 +586,70 @@ def run_agent(
             return {"status": "stop", "outcome": gate["decision"]}
         return {"status": "proceed"}
 
+    def execute_agent_step(context: dict[str, Any]) -> ToolResult | None:
+        step = context["step"]
+        if step["name"] != "run_research_experiment":
+            return None
+        normalized_args = {"spec": step["arguments"]["spec"]}
+        if experiment_authoring_client is None:
+            return ToolResult.error(
+                step["name"],
+                normalized_args,
+                "experiment_authoring_unavailable",
+                "experiment_authoring_client is required",
+                run_id=context["run"].run_id,
+                provenance={"module": "agent.tools.experiment"},
+            )
+
+        authoring_client = TelemetryClient(
+            SafetyClient(experiment_authoring_client),
+            telemetry,
+            stage="experiment_authoring",
+            model=model,
+        )
+        feedback = None
+        repairable_authoring = {"invalid_experiment_source", "malformed_response"}
+        repairable_execution = {
+            "experiment_import_error",
+            "experiment_invalid_result",
+            "experiment_runtime_error",
+        }
+        for attempt in range(2):
+            authored = author_experiment(
+                user_request,
+                step["arguments"]["spec"],
+                client=authoring_client,
+                model=model,
+                repair_feedback=feedback,
+            )
+            if authored["status"] == "error":
+                if attempt == 0 and authored["error_type"] in repairable_authoring:
+                    feedback = f"Source validation failed: {authored['error']}"
+                    continue
+                return ToolResult.error(
+                    step["name"],
+                    normalized_args,
+                    authored["error_type"],
+                    authored["error"],
+                    run_id=context["run"].run_id,
+                    provenance={"module": "agent.tools.experiment"},
+                )
+            executed = run_research_experiment(
+                step["arguments"]["spec"],
+                authored_program=authored["program"],
+                authoring_provenance=authored["provenance"],
+                run_id=context["run"].run_id,
+            )
+            executed.provenance["repair_attempts"] = attempt
+            if executed.status != "error":
+                return executed
+            code = executed.errors[0]["code"]
+            if attempt == 0 and code in repairable_execution:
+                feedback = f"Execution failed with {code}: {executed.errors[0]['message']}"
+                continue
+            return executed
+        raise AssertionError("bounded experiment repair loop exhausted")
+
     planner_decider = (
         loop_decider
         if loop_decider is not None
@@ -583,6 +665,7 @@ def run_agent(
             run=run,
             tool_results=tool_results,
             before_execute=gate_before_execute,
+            execute_step=execute_agent_step,
             max_iterations=max_iterations,
         )
     except Exception as exc:
@@ -666,6 +749,13 @@ def run_agent(
             outcome=loop_result["outcome"],
             plan=plan,
             retrieval_result=retrieval_result,
+            answer=(
+                _clarification_answer(
+                    (loop_result.get("decision") or {}).get("reason")
+                )
+                if loop_result["outcome"] == "needs_input"
+                else None
+            ),
             safety=safety,
             telemetry=telemetry,
             loop=loop_trace,

@@ -10,6 +10,7 @@ from typing import Any
 from ..core.contracts import ResearchRun, ToolResult
 from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient
 from ..core.resources import load_prompt
+from .experiment import run_research_experiment
 from .research import evaluate_factor, inspect_universe, run_backtest
 
 
@@ -100,12 +101,55 @@ TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
         },
         "strict": True,
     },
+    {
+        "type": "function",
+        "name": "run_research_experiment",
+        "description": (
+            "Request one custom research experiment when the existing deterministic "
+            "tools cannot answer the request. Supply a structured research spec, "
+            "never Python source or internal artifact paths. Execution may be "
+            "unavailable when no isolated executor is configured."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "spec": {
+                    "type": "object",
+                    "properties": {
+                        "objective": {"type": "string"},
+                        "method": {"type": "string"},
+                        "inputs": {"type": "object"},
+                        "assumptions": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "outputs": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "required": [
+                        "objective",
+                        "method",
+                        "inputs",
+                        "assumptions",
+                        "outputs",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+            "required": ["spec"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
 )
 
 TOOL_FUNCTIONS = {
     "inspect_universe": inspect_universe,
     "evaluate_factor": evaluate_factor,
     "run_backtest": run_backtest,
+    "run_research_experiment": run_research_experiment,
 }
 
 
@@ -114,7 +158,11 @@ def _request_payload(user_request: str, model: str) -> dict[str, Any]:
         "model": model,
         "instructions": load_prompt("prompts/tool_calling.md"),
         "input": user_request,
-        "tools": [dict(schema) for schema in TOOL_SCHEMAS],
+        "tools": [
+            dict(schema)
+            for schema in TOOL_SCHEMAS
+            if schema["name"] != "run_research_experiment"
+        ],
         "tool_choice": "required",
         "parallel_tool_calls": False,
     }
@@ -241,5 +289,6 @@ __all__ = [
     "OpenAIResponsesClient",
     "TOOL_FUNCTIONS",
     "TOOL_SCHEMAS",
+    "run_research_experiment",
     "run_tool_calling",
 ]

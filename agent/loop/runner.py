@@ -96,9 +96,9 @@ def _observation(
     return {
         "user_request": user_request,
         "iteration": iteration,
-        "steps": list(run.steps) if run is not None else [],
+        "steps": _compact_observation_value(list(run.steps) if run is not None else [], "steps"),
         "observations": [compact_tool_observation(result) for result in tool_results],
-        "provisional_steps": list(provisional_steps),
+        "provisional_steps": _compact_observation_value(list(provisional_steps), "provisional_steps"),
     }
 
 
@@ -110,6 +110,7 @@ def run_loop(
     run: ResearchRun | None = None,
     tool_results: list[ToolResult] | None = None,
     before_execute: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
+    execute_step: Callable[[dict[str, Any]], ToolResult | None] | None = None,
     max_iterations: int = 3,
 ) -> dict[str, Any]:
     """Run bounded one-action decisions against one append-only ResearchRun.
@@ -328,12 +329,26 @@ def run_loop(
                     "error": "before_execute returned an invalid status",
                 }
         try:
-            execute_steps(
-                [normalized["step"]],
-                run=run,
-                tool_results=results,
-                finalize=False,
-            )
+            overridden = execute_step({
+                "user_request": user_request,
+                "step": normalized["step"],
+                "run": run,
+                "tool_results": results,
+            }) if execute_step is not None else None
+            if overridden is None:
+                execute_steps(
+                    [normalized["step"]],
+                    run=run,
+                    tool_results=results,
+                    finalize=False,
+                )
+            else:
+                if not isinstance(overridden, ToolResult):
+                    raise TypeError("execute_step must return a ToolResult or None")
+                run.add_step(overridden)
+                results.append(overridden)
+                if overridden.status == "error":
+                    run.fail()
         except Exception as exc:
             if run.status == "running":
                 run.fail()
@@ -358,6 +373,28 @@ def run_loop(
                 "error_type": "execution_error",
                 "error_stage": "execution",
                 "error": "tool execution failed",
+            }
+        if (
+            not pending
+            and results
+            and results[-1].tool_name == "run_research_experiment"
+            and results[-1].status == "success"
+        ):
+            run.complete(final_status=(
+                "partial"
+                if any(step["status"] == "partial" for step in run.steps)
+                else "success"
+            ))
+            return {
+                "status": "ok",
+                "outcome": "success",
+                "research_run": run,
+                "tool_results": results,
+                "iterations": iterations,
+                "decision": normalized,
+                "error_type": None,
+                "error_stage": None,
+                "error": "",
             }
         if not pending and decide_next is None:
             run.complete(final_status=(

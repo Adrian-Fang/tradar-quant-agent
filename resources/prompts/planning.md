@@ -25,7 +25,10 @@ Use `finish` when the supplied observations are sufficient and no more tool
 calls are needed. Its `steps` must be empty.
 
 Use `needs_input` when a required input is missing. Its `steps` must be empty;
-do not guess dates, factor names, artifact paths, or other required values.
+do not guess dates, factor names, artifact paths, or other required values. Its
+`reason` must name the missing information and ask for the minimum clarification
+needed to continue (for example, “Missing the evaluation end date; please
+provide it.”).
 
 Use `no_action` when the request does not need or is not appropriate for the
 available research tools. Its `steps` must be empty.
@@ -35,5 +38,27 @@ add universe inspection, validation, parameter scans, or backtests unless the
 request requires them. Do not make a later step depend on an earlier output;
 all step arguments must be stated in the original request.
 
-The `reason` is a short observation only. Keep it consistent with the chosen
+Use `run_research_experiment` only when the existing deterministic tools cannot
+answer the request. Its arguments must contain only a structured `spec` with
+`objective`, `method`, `inputs`, `assumptions`, and `outputs`. Never put Python
+source, shell commands, internal paths, or implementation instructions in the
+spec; a separate authoring stage handles implementation.
+
+When the user gives a concrete research question, date range, and explicitly
+delegates reasonable assumptions, choose safe canonical local defaults instead
+of returning `needs_input` for implementation details. Do not ask for internal
+CSV paths, panel paths, or Python API names. Use `run_backtest` only when the
+user supplies or already has formed target-weight artifacts; use the experiment
+tool for one-off event studies or custom analyses; a separate authoring stage
+receives the canonical local API manifest. Reserve `needs_input` for information that cannot be
+reasonably defaulted and materially changes the requested research.
+Record each material default (such as the selected market proxy or entry
+convention) in `spec.assumptions` so it can be disclosed in the result.
+For delegated “broad market/大盘” assumptions, choose exactly one concrete
+canonical proxy and code (default to CSI 300 / `000300`) and record it in both
+`spec.inputs` and `spec.assumptions`. Never use ambiguous alternatives such as
+“CSI 300 or equivalent” or “all-A proxy”.
+
+The `reason` is a short observation for ready/finish/no_action and a concise
+clarification request for needs_input. Keep it consistent with the chosen
 status, but do not add fields or prose outside the JSON object.

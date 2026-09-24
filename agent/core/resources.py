@@ -13,8 +13,12 @@ RESOURCE_ROOT = REPO_ROOT / "resources"
 
 
 def load_json(relative_path: str) -> tuple[dict[str, Any], ...]:
-    value = json.loads((RESOURCE_ROOT / relative_path).read_text(encoding="utf-8"))
+    value = load_json_value(relative_path)
     return tuple(value["cases"])
+
+
+def load_json_value(relative_path: str) -> Any:
+    return json.loads((RESOURCE_ROOT / relative_path).read_text(encoding="utf-8"))
 
 
 def load_prompt(relative_path: str) -> str:
@@ -33,4 +37,11 @@ def expand_tokens(value: Any, replacements: Mapping[str, str]) -> Any:
     return value
 
 
-__all__ = ["REPO_ROOT", "RESOURCE_ROOT", "expand_tokens", "load_json", "load_prompt"]
+__all__ = [
+    "REPO_ROOT",
+    "RESOURCE_ROOT",
+    "expand_tokens",
+    "load_json",
+    "load_json_value",
+    "load_prompt",
+]

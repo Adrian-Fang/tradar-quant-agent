@@ -58,12 +58,12 @@ def to_panel(df: pd.DataFrame, field: str) -> pd.DataFrame:
 
 def price_panel(start, end, field="close", adjust="backward") -> pd.DataFrame:
     """价格宽表；研究收益默认使用运行时生成的后复权价格。"""
-    return to_panel(loader.load_prices(start, end, adjust=adjust), field)
+    return to_panel(loader.load_prices(start, end, adjust=adjust, fields=[field]), field)
 
 
 def raw_price_panel(start, end, field="close") -> pd.DataFrame:
     """不复权价格宽表。"""
-    return to_panel(loader.load_prices(start, end, adjust="none"), field)
+    return to_panel(loader.load_prices(start, end, adjust="none", fields=[field]), field)
 
 
 def _financial_events_to_panels(
@@ -124,8 +124,8 @@ def financial_panels(
 
 
 @lru_cache(maxsize=8)
-def _load_fundamentals(start, end) -> pd.DataFrame:
-    return loader.load_fundamentals(start, end)
+def _load_fundamentals(start, end, fields) -> pd.DataFrame:
+    return loader.load_fundamentals(start, end, fields=fields)
 
 
 def fundamental_panels(start, end, fields=None) -> dict[str, pd.DataFrame]:
@@ -134,7 +134,7 @@ def fundamental_panels(start, end, fields=None) -> dict[str, pd.DataFrame]:
     unknown = sorted(set(selected) - set(FUNDAMENTAL_FIELDS))
     if unknown:
         raise ValueError(f"unknown fundamental fields: {unknown}")
-    fundamentals = _load_fundamentals(start, end)
+    fundamentals = _load_fundamentals(start, end, tuple(selected))
     return {field: to_panel(fundamentals, field) for field in selected}
 
 

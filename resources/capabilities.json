@@ -2,7 +2,7 @@
   "cases": [
     {
       "id": "capability-research-tools",
-      "text": "当前 Agent 可调用的稳定研究工具包括 inspect_universe（检查 canonical A 股 universe 与交易执行 masks）、evaluate_factor（评估已有 factor 的 IC、分组诊断与年度稳定性）和 run_backtest（使用已有 artifacts 运行 canonical T+1 vector backtest）。"
+      "text": "当前 Agent 可调用的稳定研究工具包括 inspect_universe（检查 canonical A 股 universe 与交易执行 masks）、evaluate_factor（评估已有 factor 的 IC、分组诊断与年度稳定性）和 run_backtest（使用已有 artifacts 运行 canonical T+1 vector backtest）。对于这些工具无法覆盖的一次性研究，Agent 可以生成结构化实验规格并通过版本化 canonical API manifest 单独 author 程序；当前尚未配置真正的隔离执行器，因此实验执行会 fail closed 为 experiment_unavailable。"
     },
     {
       "id": "capability-research-engine",

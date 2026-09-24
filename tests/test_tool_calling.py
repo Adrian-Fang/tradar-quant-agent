@@ -42,7 +42,7 @@ class ToolCallingTests(unittest.TestCase):
     def test_schemas_are_stable_and_distinct(self):
         self.assertEqual(
             [schema["name"] for schema in TOOL_SCHEMAS],
-            ["inspect_universe", "evaluate_factor", "run_backtest"],
+            ["inspect_universe", "evaluate_factor", "run_backtest", "run_research_experiment"],
         )
         for schema in TOOL_SCHEMAS:
             self.assertEqual(schema["type"], "function")

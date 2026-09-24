@@ -73,12 +73,20 @@ class EtfLoaderTest(unittest.TestCase):
                     adjust="backward",
                     force_refresh_cache=True,
                 )
+                stock_close = loader.load_prices(
+                    "2026-01-05",
+                    "2026-01-06",
+                    adjust="backward",
+                    fields=["close"],
+                )
 
                 self.assertEqual(set(raw.index.get_level_values("symbol")), {"510300"})
                 pd.testing.assert_frame_equal(
                     adjusted.reset_index(drop=True),
                     stock.reset_index(drop=True),
                 )
+                self.assertEqual(list(stock_close), ["close"])
+                pd.testing.assert_series_equal(stock_close["close"], stock["close"])
                 pd.testing.assert_frame_equal(
                     adjusted[["volume", "amount"]],
                     raw[["volume", "amount"]],

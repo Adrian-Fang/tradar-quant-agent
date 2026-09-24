@@ -43,6 +43,7 @@ class AgentMainTests(unittest.TestCase):
         kwargs = run.call_args.kwargs
         for name in (
             "planner_client",
+            "experiment_authoring_client",
             "hitl_client",
             "synthesis_client",
             "grounding_client",

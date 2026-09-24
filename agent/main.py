@@ -123,6 +123,7 @@ def run_request(
     return run_agent(
         user_request,
         planner_client=client,
+        experiment_authoring_client=client,
         hitl_client=client,
         synthesis_client=client,
         grounding_client=client,

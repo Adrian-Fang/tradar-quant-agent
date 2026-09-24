@@ -137,6 +137,46 @@ class RuntimePlannerTests(unittest.TestCase):
         self.assertNotIn("expected_steps", client.payload["input"])
         self.assertEqual(result["status"], "ok")
 
+    def test_delegated_event_study_fixture_uses_canonical_experiment_not_paths(self):
+        request = (
+            "帮我测一下这个策略：大盘当天跌1%以上时收盘买入A股，"
+            "研究2025-01-01到2026-09-23，其他合理假设你自己决定并说明。"
+        )
+        experiment = {
+            "name": "run_research_experiment",
+            "arguments": {
+                "spec": {
+                    "objective": "Estimate forward returns after a broad-market down day.",
+                    "method": "event study",
+                    "inputs": {
+                        "start_date": "2025-01-01",
+                        "end_date": "2026-09-23",
+                        "market_proxy": "000300",
+                        "horizons": [1, 3, 5, 10, 20],
+                    },
+                    "assumptions": ["Use CSI 300 / 000300 as the broad-market proxy."],
+                    "outputs": ["forward returns", "sample counts"],
+                },
+            },
+        }
+        client = FakeClient(response({
+            "status": "ready",
+            "steps": [experiment],
+            "reason": "Use canonical local data and explicit default assumptions.",
+        }))
+
+        result = plan_request(request, client=client)
+        prompt_input = json.loads(client.payload["input"])
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["plan"]["status"], "ready")
+        self.assertEqual(result["plan"]["steps"][0]["name"], "run_research_experiment")
+        self.assertNotIn("needs_input", result["plan"]["status"])
+        self.assertNotIn("weights.csv", json.dumps(prompt_input, ensure_ascii=False))
+        self.assertNotIn("program", json.dumps(result["plan"], ensure_ascii=False))
+        self.assertNotIn("load_index", client.payload["instructions"])
+        self.assertIn("CSI 300 / `000300`", client.payload["instructions"])
+
 
 if __name__ == "__main__":
     unittest.main()

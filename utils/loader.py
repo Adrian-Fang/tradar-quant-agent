@@ -88,33 +88,50 @@ def _compute_full_cum_factor(price_table: str = "history", symbols=None) -> pd.D
     return merged[["date", "symbol", "cum_factor"]]
 
 
-def _load_full_cum_factor(force_refresh: bool = False, symbols=None) -> pd.DataFrame:
+def _load_full_cum_factor(
+    force_refresh: bool = False,
+    symbols=None,
+    start: str | None = None,
+    end: str | None = None,
+) -> pd.DataFrame:
     normalized = None if symbols is None else [str(symbol).strip().split(".")[0].zfill(6) for symbol in symbols if str(symbol).strip()]
     if not force_refresh and _cache_is_fresh():
+        filters = []
+        params = [str(CACHE_PATH)]
+        if normalized:
+            filters.append(f"symbol IN ({','.join('?' for _ in normalized)})")
+            params.extend(normalized)
+        if start is not None:
+            filters.append("date >= ?")
+            params.append(start)
+        if end is not None:
+            filters.append("date <= ?")
+            params.append(end)
+        where = f" WHERE {' AND '.join(filters)}" if filters else ""
         con = get_conn()
         try:
-            if normalized:
-                placeholders = ",".join("?" for _ in normalized)
-                return con.execute(
-                    f"SELECT date, symbol, cum_factor FROM read_parquet(?) WHERE symbol IN ({placeholders})",
-                    [str(CACHE_PATH), *normalized],
-                ).fetchdf()
-            return con.execute("SELECT date, symbol, cum_factor FROM read_parquet(?)", [str(CACHE_PATH)]).fetchdf()
+            return con.execute(
+                f"SELECT date, symbol, cum_factor FROM read_parquet(?){where}",
+                params,
+            ).fetchdf()
         finally:
             con.close()
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     df = _compute_full_cum_factor(symbols=normalized)
-    if normalized:
-        return df
-    con = get_conn()
-    try:
-        con.register("_cum_factor_cache", df)
-        escaped_path = str(CACHE_PATH).replace("'", "''")
-        con.execute(
-            f"COPY _cum_factor_cache TO '{escaped_path}' (FORMAT PARQUET)"
-        )
-    finally:
-        con.close()
+    if not normalized:
+        con = get_conn()
+        try:
+            con.register("_cum_factor_cache", df)
+            escaped_path = str(CACHE_PATH).replace("'", "''")
+            con.execute(
+                f"COPY _cum_factor_cache TO '{escaped_path}' (FORMAT PARQUET)"
+            )
+        finally:
+            con.close()
+    if start is not None:
+        df = df[df["date"] >= pd.Timestamp(start)]
+    if end is not None:
+        df = df[df["date"] <= pd.Timestamp(end)]
     return df
 
 
@@ -132,11 +149,19 @@ def _apply_price_adjustment(
     if adjust == "forward":
         factor = factor / df.groupby("symbol")["cum_factor"].transform("last")
     for col in ("open", "high", "low", "close"):
-        df[col] = df[col] * factor
+        if col in df:
+            df[col] = df[col] * factor
     return df.drop(columns=["cum_factor"])
 
 
-def load_prices(start: str, end: str, adjust: str = "forward", force_refresh_cache: bool = False, symbols=None) -> pd.DataFrame:
+def load_prices(
+    start: str,
+    end: str,
+    adjust: str = "forward",
+    force_refresh_cache: bool = False,
+    symbols=None,
+    fields=None,
+) -> pd.DataFrame:
     """价格数据, MultiIndex(date, symbol)。
      history 存不复权原始数据，通过 ex_factors.ex_factor 累乘计算复权价。
     累计复权因子缓存在共享目录的 cum_factor.parquet，按 DB mtime 判断是否过期。
@@ -146,9 +171,16 @@ def load_prices(start: str, end: str, adjust: str = "forward", force_refresh_cac
     adjust='backward'-> 后复权: price × cum_factor（从上市第一天累计，不受窗口影响）
     force_refresh_cache: 强制忽略缓存重新计算（怀疑缓存和最新数据不一致时用）
     symbols: 可选股票代码过滤，保持默认全市场行为。
+    fields: 可选字段或字段列表；默认保持原有 OHLCV+amount 全字段行为。
     """
     if adjust not in {"none", "forward", "backward"}:
         raise ValueError(f"unknown adjust: {adjust}")
+    columns = ["open", "high", "low", "close", "volume", "amount"]
+    selected = columns if fields is None else ([fields] if isinstance(fields, str) else list(fields))
+    selected = list(dict.fromkeys(selected))
+    unknown = sorted(set(selected) - set(columns))
+    if not selected or unknown:
+        raise ValueError(f"unknown or empty price fields: {unknown}")
 
     params = [start, end]
     symbol_filter = ""
@@ -158,14 +190,14 @@ def load_prices(start: str, end: str, adjust: str = "forward", force_refresh_cac
         normalized = [str(symbol).strip().split(".")[0].zfill(6) for symbol in symbols if str(symbol).strip()]
         if not normalized:
             index = pd.MultiIndex.from_arrays([[], []], names=["date", "symbol"])
-            return pd.DataFrame(index=index, columns=["open", "high", "low", "close", "volume", "amount"], dtype=float)
+            return pd.DataFrame(index=index, columns=selected, dtype=float)
         symbol_filter = f" AND symbol IN ({','.join('?' for _ in normalized)})"
         params.extend(normalized)
 
     con = get_conn()
     try:
         raw = con.execute(f"""
-            SELECT symbol, date, open, high, low, close, volume, amount
+            SELECT symbol, date, {', '.join(selected)}
             FROM history
             WHERE date >= ? AND date <= ?{symbol_filter}
             ORDER BY date, symbol
@@ -176,23 +208,20 @@ def load_prices(start: str, end: str, adjust: str = "forward", force_refresh_cac
     raw["symbol"] = raw["symbol"].astype(str).str.zfill(6)
     raw["date"] = pd.to_datetime(raw["date"])
 
-    if adjust == "none":
+    adjusted_fields = set(selected) & {"open", "high", "low", "close"}
+    if adjust == "none" or not adjusted_fields:
         df = raw
     else:
         cum_factor_all = _load_full_cum_factor(
             force_refresh=force_refresh_cache,
             symbols=normalized if symbols is not None else None,
+            start=start,
+            end=end,
         )
         cum_factor_all["date"] = pd.to_datetime(cum_factor_all["date"])
-        start_ts = pd.Timestamp(start)
-        end_ts = pd.Timestamp(end)
-        cum_factor_all = cum_factor_all[
-            (cum_factor_all["date"] >= start_ts) & (cum_factor_all["date"] <= end_ts)
-        ]
         df = _apply_price_adjustment(raw, cum_factor_all, adjust)
 
-    columns = ["open", "high", "low", "close", "volume", "amount"]
-    return df.set_index(["date", "symbol"])[columns].sort_index()
+    return df.set_index(["date", "symbol"])[selected].sort_index()
 
 
 def load_etf_prices(
@@ -255,15 +284,27 @@ def load_etf_prices(
 
 # ── 基本面 ────────────────────────────────────────────────────────────────────
 
-def load_fundamentals(start: str, end: str) -> pd.DataFrame:
+def load_fundamentals(start: str, end: str, fields=None) -> pd.DataFrame:
     """基本面快照 —— 永远从 hist_ext 取，不受复权/后续覆盖影响。
     exchange_change_pct 是交易所实际涨跌幅（百分数），只用于交易状态判断。
     """
+    sql_fields = {
+        "is_st": "is_st",
+        "is_trading": "is_trading",
+        "turnover_rate": "turnover_rate",
+        "market_cap": "market_cap",
+        "pe": "pe",
+        "pb": "pb",
+        "exchange_change_pct": "change_pct AS exchange_change_pct",
+    }
+    selected = list(sql_fields if fields is None else fields)
+    unknown = sorted(set(selected) - set(sql_fields))
+    if not selected or unknown:
+        raise ValueError(f"unknown or empty fundamental fields: {unknown}")
     con = get_conn()
     try:
-        df = con.execute("""
-            SELECT symbol, date, is_st, is_trading, turnover_rate, market_cap, pe, pb,
-                   change_pct AS exchange_change_pct
+        df = con.execute(f"""
+            SELECT symbol, date, {', '.join(sql_fields[field] for field in selected)}
             FROM hist_ext
             WHERE date >= ? AND date <= ?
             ORDER BY date, symbol

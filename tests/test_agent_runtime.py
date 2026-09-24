@@ -38,6 +38,17 @@ class Client:
         return response(self.output)
 
 
+class SequenceClient(Client):
+    def __init__(self, outputs):
+        super().__init__(outputs[0])
+        self.outputs = outputs
+
+    def create(self, payload):
+        self.calls.append(payload)
+        output = self.outputs[min(len(self.calls) - 1, len(self.outputs) - 1)]
+        return response(output)
+
+
 def tool(calls, status="success"):
     def execute(*, run_id, **arguments):
         calls.append((arguments, run_id))
@@ -110,6 +121,40 @@ class AgentRuntimeTests(unittest.TestCase):
                 self.assertIsNone(result["observed"]["hitl"])
                 self.assertEqual(hitl.calls, [])
                 self.assertEqual(calls, [])
+
+    def test_initial_needs_input_has_user_visible_clarification(self):
+        result, _, hitl, _, calls = self.run_with_tool(
+            planner_output=plan(
+                "needs_input",
+                steps=None,
+            ),
+        )
+
+        self.assertEqual(result["observed"]["outcome"], {"status": "needs_input"})
+        self.assertEqual(result["answer"], "test")
+        self.assertEqual(hitl.calls, [])
+        self.assertEqual(calls, [])
+
+    def test_loop_needs_input_has_user_visible_clarification(self):
+        planner = SequenceClient([
+            plan(steps=[research_step()]),
+            plan("needs_input", steps=None),
+        ])
+        hitl = Client({"decision": "proceed", "approval_request": None, "reason": "test"})
+        calls = []
+        with patch("agent.tools.executor.TOOL_FUNCTIONS", {
+            "inspect_universe": tool(calls),
+        }):
+            result = run_agent(
+                "Inspect the universe, then continue only if needed.",
+                planner_client=planner,
+                hitl_client=hitl,
+            )
+
+        self.assertEqual(result["observed"]["outcome"], {"status": "needs_input"})
+        self.assertEqual(result["answer"], "test")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(planner.calls), 2)
 
     def test_meta_no_action_returns_grounded_capability_answer_without_tools(self):
         planner, hitl, _, = self.clients(

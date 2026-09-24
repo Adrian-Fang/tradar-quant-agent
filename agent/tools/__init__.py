@@ -3,6 +3,7 @@
 from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient
 from .executor import execute_steps
 from .calling import TOOL_FUNCTIONS, TOOL_SCHEMAS, _request_payload, run_tool_calling
+from .experiment import run_research_experiment
 from .research import evaluate_factor, inspect_universe, run_backtest
 
 __all__ = [
@@ -14,5 +15,6 @@ __all__ = [
     "evaluate_factor",
     "inspect_universe",
     "run_backtest",
+    "run_research_experiment",
     "run_tool_calling",
 ]

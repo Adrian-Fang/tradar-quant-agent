@@ -251,6 +251,7 @@ class ResearchRun:
             "warnings": tool_result.warnings,
             "errors": tool_result.errors,
             "artifacts": tool_result.artifacts,
+            "provenance": tool_result.provenance,
         }
         if result_ref is not None:
             step["result_ref"] = result_ref

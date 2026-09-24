@@ -1,0 +1,144 @@
+{
+  "version": "1.4.0",
+  "execution_policy": {
+    "access": "read_only_research",
+    "network": false,
+    "shell": false,
+    "secrets": false,
+    "live_trading": false,
+    "source_tree_writes": false
+  },
+  "safe_libraries": [
+    {
+      "module": "pandas",
+      "alias": "pd",
+      "import": "import pandas as pd",
+      "purpose": "DataFrame and Series construction, alignment, grouping, and aggregation"
+    },
+    {
+      "module": "numpy",
+      "alias": "np",
+      "import": "import numpy as np",
+      "purpose": "Finite numeric operations and missing-value handling"
+    }
+  ],
+  "result_schema": {
+    "type": "object",
+    "required": [
+      "assumptions",
+      "method",
+      "data_coverage",
+      "metrics",
+      "sample_counts",
+      "warnings"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "assumptions": {
+        "type": "array",
+        "items": {"type": "string", "minLength": 1}
+      },
+      "method": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": true,
+        "properties": {
+          "type": {"type": "string", "minLength": 1},
+          "description": {"type": "string"}
+        }
+      },
+      "data_coverage": {
+        "type": "object",
+        "required": ["actual_start", "actual_end"],
+        "additionalProperties": true,
+        "properties": {
+          "requested_start": {"type": ["string", "null"]},
+          "requested_end": {"type": ["string", "null"]},
+          "actual_start": {"type": ["string", "null"]},
+          "actual_end": {"type": ["string", "null"]}
+        }
+      },
+      "metrics": {"type": "object", "additionalProperties": true},
+      "sample_counts": {"type": "object", "additionalProperties": true},
+      "warnings": {
+        "type": "array",
+        "items": {"type": "string", "minLength": 1}
+      }
+    }
+  },
+  "result_normalization": {
+    "preferred": "Return JSON-native values.",
+    "accepted": [
+      "finite numpy scalars and arrays",
+      "pandas Timestamp, Timedelta, Series, DataFrame, Index, NA, and NaT values"
+    ],
+    "rule": "Normalization applies to values only and never repairs a structurally invalid result field."
+  },
+  "apis": [
+    {
+      "module": "utils.loader",
+      "name": "load_prices",
+      "signature": "load_prices(start, end, adjust='forward', symbols=None, fields=None)",
+      "returns": "DataFrame indexed by (date, symbol) with only requested fields; fields=None preserves open/high/low/close/volume/amount",
+      "notes": "adjust is one of none, forward, backward; request the smallest field set needed"
+    },
+    {
+      "module": "utils.loader",
+      "name": "load_index",
+      "signature": "load_index(code, start_date=None, end_date=None)",
+      "returns": "Series of index close values indexed by date",
+      "notes": "aliases include 000001, SH, 000300, HS300, 000905, ZZ500, 000852, ZZ1000, 399006, CYB, 000688, STAR"
+    },
+    {
+      "module": "research.panel",
+      "name": "price_panel",
+      "signature": "price_panel(start, end, field='close', adjust='backward')",
+      "returns": "Wide date by symbol DataFrame",
+      "notes": "field is close, open, high, low, volume, or amount; only that field is loaded"
+    },
+    {
+      "module": "research.panel",
+      "name": "eligible_universe_mask",
+      "signature": "eligible_universe_mask(start, end, exclude_st=True, min_turnover_rate=1.0, min_listed_days=20)",
+      "returns": "Boolean date by symbol DataFrame",
+      "notes": "canonical A-share eligibility mask"
+    },
+    {
+      "module": "research.panel",
+      "name": "is_trading_mask",
+      "signature": "is_trading_mask(start, end)",
+      "returns": "Boolean date by symbol DataFrame",
+      "notes": "trading-status mask only"
+    },
+    {
+      "module": "research.panel",
+      "name": "buyable_mask",
+      "signature": "buyable_mask(start, end)",
+      "returns": "Boolean date by symbol DataFrame",
+      "notes": "canonical trading and price-limit entry mask"
+    },
+    {
+      "module": "research.panel",
+      "name": "sellable_mask",
+      "signature": "sellable_mask(start, end)",
+      "returns": "Boolean date by symbol DataFrame",
+      "notes": "canonical trading and price-limit exit mask"
+    },
+    {
+      "module": "research.panel",
+      "name": "index_return",
+      "signature": "index_return(code, start=None, end=None)",
+      "returns": "Series of close-to-close index returns indexed by date",
+      "notes": "first observation is missing because returns use pct_change"
+    }
+  ],
+  "canonical_defaults": {
+    "broad_market_proxy": {"code": "000300", "label": "沪深300"},
+    "price_adjustment": "backward",
+    "eligible_universe": {
+      "exclude_st": true,
+      "min_turnover_rate": 1.0,
+      "min_listed_days": 20
+    }
+  }
+}
