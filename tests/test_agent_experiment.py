@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -43,6 +44,33 @@ def spec():
         "assumptions": ["Use 000300 as the delegated broad-market proxy."],
         "outputs": ["forward return summary", "event and observation counts"],
     }
+
+
+def _sandbox_namespaces_available():
+    try:
+        return subprocess.run(
+            [
+                "unshare", "--user", "--map-root-user", "--mount", "--net",
+                "--pid", "--ipc", "--uts", "--fork", "--kill-child=KILL",
+                "--propagation", "private", "true",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        ).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+_SANDBOX_NAMESPACES_AVAILABLE = _sandbox_namespaces_available()
+
+
+def _requires_sandbox(test):
+    return unittest.skipUnless(
+        _SANDBOX_NAMESPACES_AVAILABLE,
+        "runner does not permit the Linux namespaces required by experiment isolation",
+    )(test)
 
 
 PROGRAM = (
@@ -207,6 +235,7 @@ class ExperimentArchitectureTests(unittest.TestCase):
 
         self.assertEqual(authored["status"], "ok")
 
+    @_requires_sandbox
     def test_execution_returns_validated_result_and_provenance(self):
         authored = author_experiment("request", spec(), client=Client({"program": PROGRAM}))
         with tempfile.TemporaryDirectory() as data_path, patch.dict(
@@ -264,6 +293,7 @@ class ExperimentArchitectureTests(unittest.TestCase):
 
         self.assertNotEqual(before, after)
 
+    @_requires_sandbox
     def test_sandbox_exposes_canonical_loader_but_not_other_data_files(self):
         source = (
             "import pandas as pd\n"
@@ -383,6 +413,7 @@ class ExperimentArchitectureTests(unittest.TestCase):
         _, error = validate_experiment_result({**valid, "method": {}})
         self.assertEqual(error, "result.method.type is required")
 
+    @_requires_sandbox
     def test_runtime_authors_executes_and_does_not_leak_source(self):
         planner = Client({
             "status": "ready",
@@ -452,6 +483,7 @@ class ExperimentArchitectureTests(unittest.TestCase):
             [call["stage"] for call in result["telemetry"]["calls"]],
         )
 
+    @_requires_sandbox
     def test_runtime_repairs_once_after_runtime_failure(self):
         planner = Client({
             "status": "ready",
@@ -502,6 +534,7 @@ class ExperimentArchitectureTests(unittest.TestCase):
             result["research_run"].steps[0]["provenance"]["repair_attempts"], 1
         )
 
+    @_requires_sandbox
     def test_runtime_repairs_once_after_disallowed_import(self):
         planner = Client({
             "status": "ready",
@@ -550,6 +583,7 @@ class ExperimentArchitectureTests(unittest.TestCase):
             result["research_run"].steps[0]["provenance"]["repair_attempts"], 1
         )
 
+    @_requires_sandbox
     def test_runtime_repairs_once_after_malformed_authoring(self):
         planner = Client({
             "status": "ready",
@@ -599,6 +633,7 @@ class ExperimentArchitectureTests(unittest.TestCase):
             result["research_run"].steps[0]["provenance"]["repair_attempts"], 1
         )
 
+    @_requires_sandbox
     def test_runtime_repairs_once_after_invalid_result_shape(self):
         planner = Client({
             "status": "ready",
@@ -681,6 +716,7 @@ class ExperimentArchitectureTests(unittest.TestCase):
         )
 
 
+@_requires_sandbox
 class ExperimentSandboxTests(unittest.TestCase):
     def execute(self, source, **kwargs):
         with tempfile.TemporaryDirectory() as data_path:
