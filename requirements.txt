@@ -5,3 +5,5 @@ pyarrow==23.0.0
 PyYAML==6.0.3
 python-dotenv==1.2.1
 tickflow==0.1.24
+starlette==1.6.0
+uvicorn==0.52.3
