@@ -32,6 +32,9 @@ __pycache__/
 venv/
 env/
 
+# local deployment overrides
+/deploy/tradar-agent.service
+
 ## temp files
 temp/
 *.diff

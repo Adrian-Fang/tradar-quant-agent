@@ -111,7 +111,7 @@ class AgentHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["error_type"], "busy")
 
     def test_service_config_is_localhost_single_worker(self):
-        service = Path(__file__).parents[1] / "deploy" / "tradar-agent.service"
+        service = Path(__file__).parents[1] / "deploy" / "tradar-agent.service.example"
         text = service.read_text(encoding="utf-8")
         self.assertIn("agent.http:app", text)
         self.assertIn("--host 127.0.0.1", text)
