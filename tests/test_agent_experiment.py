@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sysconfig
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -133,6 +134,23 @@ class ExperimentArchitectureTests(unittest.TestCase):
         )
         artifact_patch.start()
         self.addCleanup(artifact_patch.stop)
+
+    def test_isolation_python_paths_follow_running_interpreter(self):
+        config = experiment_module._isolation_config(Path("/tmp/root"), Path("/tmp/data"))
+        expected = {
+            path
+            for path in (
+                sysconfig.get_path("stdlib"),
+                sysconfig.get_path("platstdlib"),
+                sysconfig.get_config_var("DESTSHARED"),
+                sysconfig.get_path("purelib"),
+                sysconfig.get_path("platlib"),
+            )
+            if path
+        }
+
+        self.assertTrue(expected.issubset(config["python_library_paths"]))
+        self.assertTrue(expected.issubset(config["python_path"]))
 
     def test_schema_uses_structured_spec_without_source(self):
         schema = next(item for item in TOOL_SCHEMAS if item["name"] == "run_research_experiment")

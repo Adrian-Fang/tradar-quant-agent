@@ -188,7 +188,8 @@ def _setup(config: dict[str, Any]) -> None:
     root = Path(config["root"])
     _mount(str(root), root, flags=MS_BIND | MS_REC)
     _bind_read_only(config["usr_lib"], root / "usr/lib")
-    _bind_read_only(config["venv_lib"], root / config["venv_lib"].lstrip("/"))
+    for path in config["python_library_paths"]:
+        _bind_read_only(path, root / path.lstrip("/"))
     _bind_read_only(config["research_path"], root / "app/research", noexec=True)
     _bind_read_only(config["utils_path"], root / "app/utils", noexec=True)
     for name in config["data_entries"]:

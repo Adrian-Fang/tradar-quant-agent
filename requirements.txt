@@ -3,6 +3,7 @@ openai==3.7.0
 pandas==3.0.3
 pyarrow==23.0.0
 PyYAML==6.0.3
+scipy==1.18.0
 python-dotenv==1.2.1
 tickflow==0.1.24
 starlette==1.6.0

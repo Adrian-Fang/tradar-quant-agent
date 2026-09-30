@@ -11,6 +11,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import sysconfig
 import tempfile
 from collections.abc import Mapping
 import time
@@ -565,8 +566,17 @@ def author_experiment(
 
 
 def _isolation_config(root: Path, data_path: Path) -> dict[str, Any]:
-    python_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
-    venv_lib = Path(sys.prefix) / "lib"
+    python_library_paths = list(dict.fromkeys(
+        path
+        for path in (
+            sysconfig.get_path("stdlib"),
+            sysconfig.get_path("platstdlib"),
+            sysconfig.get_config_var("DESTSHARED"),
+            sysconfig.get_path("purelib"),
+            sysconfig.get_path("platlib"),
+        )
+        if path
+    ))
     data_entries = [
         name
         for name in ("tradar.duckdb", "tradar.duckdb.wal")
@@ -576,17 +586,12 @@ def _isolation_config(root: Path, data_path: Path) -> dict[str, Any]:
         "root": str(root),
         "work_path": str(root.parent / "workspace"),
         "usr_lib": "/usr/lib",
-        "venv_lib": str(venv_lib),
+        "python_library_paths": python_library_paths,
         "research_path": str(REPO_ROOT / "research"),
         "utils_path": str(REPO_ROOT / "utils"),
         "data_path": str(data_path),
         "data_entries": data_entries,
-        "python_path": [
-            "/app",
-            f"/usr/lib/{python_version}",
-            f"/usr/lib/{python_version}/lib-dynload",
-            str(venv_lib / python_version / "site-packages"),
-        ],
+        "python_path": ["/app", *python_library_paths],
         "environment": {
             "DATA_PATH": "/data",
             "TRADAR_CACHE_DIR": "/work/cache",
@@ -609,10 +614,9 @@ def _isolation_config(root: Path, data_path: Path) -> dict[str, Any]:
     }
 
 
-def _prepare_root(root: Path, venv_lib: Path) -> None:
+def _prepare_root(root: Path) -> None:
     for relative in ("app/research", "app/utils", "data", "proc", "usr/lib", "work"):
         (root / relative).mkdir(parents=True, exist_ok=True)
-    (root / venv_lib.as_posix().lstrip("/")).mkdir(parents=True, exist_ok=True)
     (root / "lib").symlink_to("usr/lib")
     (root.parent / "workspace").mkdir()
 
@@ -644,8 +648,7 @@ def _execute_isolated_source(
     with tempfile.TemporaryDirectory(prefix="tradar-experiment-") as directory:
         run_dir = Path(directory)
         root = run_dir / "root"
-        venv_lib = Path(sys.prefix) / "lib"
-        _prepare_root(root, venv_lib)
+        _prepare_root(root)
         (run_dir / "workspace/cache").mkdir(mode=0o700)
         (run_dir / "workspace/experiment.py").write_text(program, encoding="utf-8")
         config = _isolation_config(root, selected_data.resolve())
