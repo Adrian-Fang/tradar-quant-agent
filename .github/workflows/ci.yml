@@ -38,8 +38,11 @@ jobs:
             echo "::warning::Runner does not permit required namespaces; sandbox-dependent tests will report as skipped"
           fi
       - run: python -m compileall -q agent research utils tests
+      - name: Create empty CI data directory
+        run: mkdir -p "$RUNNER_TEMP/tradar-data"
       - run: python -m pytest -q -rs
         env:
+          DATA_PATH: ${{ runner.temp }}/tradar-data
           PYTHONPATH: .
       - name: Restore runner AppArmor setting
         if: always() && steps.userns.outputs.changed == 'true'
