@@ -125,6 +125,41 @@ def test_canonical_legacy_records_and_three_semantic_chunks():
         assert all("# Provenance" not in chunk["text"] for chunk in chunk_record(record, load_profile()))
 
 
+@pytest.mark.parametrize("strategy", ["dense", "hybrid"])
+def test_hydrated_qdrant_records_reach_agent_context_without_live_services(backend, strategy):
+    from agent.agent import run_agent
+
+    sync(**backend)
+    retriever = KnowledgeRetriever(**backend)
+    verifier = Mock(provider="fixture", model="fixture")
+    verifier.create.return_value = {"output_text": json.dumps({"supported": True, "reason": "cost defaults directly support the query"})}
+    planner = Mock(provider="fixture", model="fixture")
+    planner.create.return_value = {"output_text": json.dumps({"status": "no_action", "steps": [], "reason": "fixture"})}
+    result = run_agent(
+        "What are the canonical transaction cost assumptions?", planner_client=planner,
+        retrieval_backend="qdrant", knowledge_retriever=retriever, retrieval_client=verifier,
+        retrieval_strategy=strategy,
+        retrieval_filters={"research_id": "RR-010"}, candidate_limit=1,
+    )
+    record = next(record for record in load_research_records(backend["root"]) if record["research_id"] == "RR-010")
+    assert result["retrieval"]["results"][0]["source_hash"] == record["source_hash"]
+    assert result["observed"]["retrieval"]["research_ids"] == ["RR-010"]
+    assert result["observed"]["retrieval"]["chunks_returned"] == 3
+    assert result["observed"]["retrieval"]["mode"] == strategy
+    request = next(call[1] for call in reversed(backend["store"].calls) if call[0] == "query")
+    if strategy == "dense":
+        assert request["using"] == "dense" and "prefetch" not in request
+    else:
+        assert request["query"] == {"rrf": {"k": 60}} and len(request["prefetch"]) == 2
+    verified = json.loads(verifier.create.call_args.args[0]["input"])["research_record"]
+    assert verified["text"] == record["text"] and "score" not in verified
+    planner_input = json.loads(planner.create.call_args.args[0]["input"])["user_request"]
+    context = json.loads(planner_input.split("\n\nContext:\n", 1)[1])
+    assert context[1]["text"] == record["text"]
+    assert context[1]["provenance"] == record["provenance"]
+    assert result["status"] == "ok"
+
+
 def test_public_corpus_has_no_private_messaging_identifiers():
     import re
     private = re.compile(r"(?i:\bslack\b)|\b[CDGU][A-Z0-9]{10}\b|\b\d{10}\.\d{6}\b")

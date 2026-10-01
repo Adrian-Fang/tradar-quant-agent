@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from time import perf_counter
 from typing import Any
 
 from .answer.synthesizer import synthesize_answer
@@ -17,7 +18,9 @@ from .grounding.verifier import verify_answer_grounding
 from .hitl.gate import gate_action
 from .loop.runner import run_loop
 from .planning.planner import plan_request
-from .retrieval.relevance_verifier import retrieve_verified
+from .retrieval.hybrid_retriever import KnowledgeRetriever
+from .retrieval.qdrant_store import filter_spec
+from .retrieval.relevance_verifier import retrieve_verified, verify_candidates
 from .tools.experiment import author_experiment, run_research_experiment
 
 
@@ -322,6 +325,10 @@ def run_agent(
     synthesis_client: Any | None = None,
     grounding_client: Any | None = None,
     retrieval_client: Any | None = None,
+    retrieval_backend: str = "legacy",
+    retrieval_strategy: str = "dense",
+    knowledge_retriever: Any | None = None,
+    retrieval_filters: dict[str, Any] | None = None,
     semantic_embedder: Any | None = None,
     prepared_corpus: dict[str, Any] | None = None,
     context_items: list[dict[str, Any]] | None = None,
@@ -366,6 +373,25 @@ def run_agent(
             telemetry=telemetry,
         )
 
+    if retrieval_backend not in {"legacy", "qdrant"}:
+        raise ValueError("retrieval_backend must be legacy or qdrant")
+    if retrieval_strategy not in ("dense", "hybrid"):
+        raise ValueError("retrieval_strategy must be dense or hybrid")
+    if retrieval_backend == "legacy" and (knowledge_retriever is not None or retrieval_filters):
+        raise ValueError("knowledge_retriever and retrieval_filters require the qdrant backend")
+    if retrieval_filters is not None and not isinstance(retrieval_filters, dict):
+        raise ValueError("retrieval_filters must be an object")
+    filters = dict(retrieval_filters or {})
+    if retrieval_backend == "qdrant":
+        if type(candidate_limit) is not int or not 1 <= candidate_limit <= 5:
+            raise ValueError("qdrant candidate_limit must be between 1 and 5")
+        for key, value in (("market", market), ("topic", topic), ("status", record_status)):
+            if value is not None:
+                if key in filters and filters[key] != value:
+                    raise ValueError(f"conflicting retrieval filter: {key}")
+                filters[key] = value
+        filter_spec(filters)
+
     safe_context_items = []
     for item in context_items or []:
         event = quarantine_untrusted_text(
@@ -392,33 +418,67 @@ def run_agent(
     retrieval_result = None
     retrieval_trace = {"status": "not_used", "research_ids": []}
 
-    if semantic_embedder is not None:
+    if retrieval_backend == "qdrant" or semantic_embedder is not None:
         if retrieval_client is None:
-            raise ValueError("retrieval_client is required with semantic_embedder")
-        retrieval_result = retrieve_verified(
-            user_request,
-            client=TelemetryClient(
-                SafetyClient(retrieval_client),
-                telemetry,
-                stage="retrieval_verifier",
-                model=model,
-            ),
-            model=model,
-            candidate_limit=candidate_limit,
-            market=market,
-            topic=topic,
-            status=record_status,
-            embedder=semantic_embedder,
-            prepared_corpus=prepared_corpus,
+            raise ValueError("retrieval_client is required when retrieval is enabled")
+        verifier = TelemetryClient(
+            SafetyClient(retrieval_client), telemetry, stage="retrieval_verifier", model=model
         )
+        started = perf_counter()
+        details = {"backend": retrieval_backend}
+        if retrieval_backend == "qdrant":
+            details.update({"mode": retrieval_strategy, "filters": filters, "candidate_limit": candidate_limit})
+        try:
+            if retrieval_backend == "qdrant":
+                # Construct only after safety checks. Never index or fall back on runtime startup.
+                retriever = knowledge_retriever if knowledge_retriever is not None else KnowledgeRetriever()
+                search = retriever.search(user_request, mode=retrieval_strategy, limit=candidate_limit, **filters)
+                candidates = search["results"]
+                if not isinstance(candidates, list) or len(candidates) > candidate_limit:
+                    raise ValueError("retriever exceeded the record candidate limit or returned invalid results")
+                details.update({
+                    "candidate_ids": [record["research_id"] for record in candidates],
+                    "latency_ms": dict(search.get("latency_ms", {})),
+                    "chunks_returned": search.get("chunks_returned"),
+                    "quarantined_ids": [],
+                })
+                safe_candidates = []
+                for record in candidates:
+                    event = quarantine_untrusted_text(record["text"], source=f"retrieval:{record['research_id']}")
+                    if event["status"] == "quarantined":
+                        safety["events"].append(event)
+                        details["quarantined_ids"].append(record["research_id"])
+                    else:
+                        safe_candidates.append(record)
+                tick = perf_counter()
+                retrieval_result = verify_candidates(user_request, safe_candidates, client=verifier, model=model)
+                details["latency_ms"]["verification_ms"] = (perf_counter() - tick) * 1000
+            else:
+                retrieval_result = retrieve_verified(
+                    user_request, client=verifier, model=model, candidate_limit=candidate_limit,
+                    market=market, topic=topic, status=record_status,
+                    embedder=semantic_embedder, prepared_corpus=prepared_corpus,
+                )
+        except Exception as exc:
+            retrieval_result = {
+                "status": "error", "results": [], "rejected": [],
+                "errors": [{"error_type": "retrieval_error", "error": f"{type(exc).__name__}: {exc}"}],
+                "reason": "retrieval failed closed",
+            }
+        details.setdefault("latency_ms", {})["runtime_total_ms"] = (perf_counter() - started) * 1000
+        retrieval_result.update(details)
         retrieval_trace = {
             "status": retrieval_result["status"],
             "research_ids": [
                 item["research_id"] for item in retrieval_result.get("results", [])
             ],
+            **details,
+            "reason": retrieval_result.get("reason", ""),
+            "rejected": retrieval_result.get("rejected", []),
+            "errors": retrieval_result.get("errors", []),
         }
         if retrieval_result["status"] == "error":
-            error = retrieval_result.get("errors", [{}])[0]
+            error = (retrieval_result.get("errors") or [{}])[0]
             return _finish(
                 context_ids=[item["id"] for item in selected],
                 planning=None,
@@ -436,20 +496,7 @@ def run_agent(
                 safety=safety,
                 telemetry=telemetry,
             )
-        if retrieval_result["status"] == "abstain":
-            return _finish(
-                context_ids=[item["id"] for item in selected],
-                planning=None,
-                steps=[],
-                retrieval=retrieval_trace,
-                research_run=None,
-                grounding=None,
-                hitl=None,
-                outcome="abstain",
-                retrieval_result=retrieval_result,
-                safety=safety,
-                telemetry=telemetry,
-            )
+        # No historical support is not a verdict on whether new research is possible.
         for result in retrieval_result["results"]:
             item = {
                 "id": result["research_id"],
@@ -494,6 +541,7 @@ def run_agent(
             grounding=None,
             hitl=None,
             outcome="error",
+            retrieval_result=retrieval_result,
             status="error",
             error_type=planned["error_type"],
             error=planned["error"],

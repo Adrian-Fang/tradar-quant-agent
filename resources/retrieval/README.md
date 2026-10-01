@@ -1,8 +1,9 @@
 # AE-14 research knowledge backend
 
 Markdown under `resources/knowledge/research/*.md` is canonical. Qdrant contains
-derived chunks, never market data. No indexing happens on Agent startup, and
-`run_agent()` still uses its existing retrieval path. No LangChain, LlamaIndex,
+derived chunks, never market data. No indexing happens on Agent startup.
+`run_agent()` supports opt-in Qdrant retrieval (dense by default, hybrid optional)
+alongside legacy semantic retrieval. No LangChain, LlamaIndex,
 FastEmbed, PyTorch, custom BM25 tokenizer, or model downloads are added.
 
 ## Research record v1
@@ -177,8 +178,52 @@ evidence-field allowlist in `verify_record()` excludes all retrieval diagnostics
 (not just one score key), and avoids duplicating section text. It preserves fused order among
 accepted records; it is relevance **verification**, not a cross-encoder reranker.
 Malformed/provider errors retain the existing fail-closed behavior. Existing
-`retrieve_verified()` remains a semantic-retrieval wrapper for the unchanged
-Agent runtime.
+`retrieve_verified()` remains the legacy semantic-retrieval wrapper.
+
+## Agent runtime (opt-in)
+
+After explicitly syncing/rebuilding the index, select the backend:
+
+```bash
+python -m agent.main "研究 A 股交易成本的默认口径" --retrieval qdrant
+# Explicitly select dense + BM25/RRF instead of the runtime dense default:
+python -m agent.main "研究 A 股交易成本的默认口径" --retrieval qdrant --retrieval-strategy hybrid
+```
+
+Default `--retrieval none` is unchanged; `ollama` / `openai` retain legacy
+semantic retrieval. Qdrant uses the indexed profile's dense embedding model;
+the optional hybrid strategy adds native BM25/RRF, not a legacy embedding provider.
+`--retrieval-strategy dense|hybrid` applies to Qdrant only. No automatic fallback,
+indexing, rebuilding or model download occurs.
+
+The runtime boundary is `run_agent(..., retrieval_backend="qdrant", retrieval_strategy="dense",
+retrieval_client=verifier_client, knowledge_retriever=retriever,
+retrieval_filters={"tags": ["cost"]}, candidate_limit=5)`.
+Inject any object with the `KnowledgeRetriever.search()` contract for hermetic
+tests; omit it to construct the standard backend **after request safety checks**.
+`run_request(..., retrieval="qdrant", knowledge_retriever=retriever, ...)` forwards
+these options. `market`, `topic`, `record_status` map to exact backend filters;
+`retrieval_filters` exposes the complete filter contract above. Conflicting or
+invalid filters fail configuration validation; no language-trigger filters are
+inferred. The Qdrant record candidate limit is 1–5, with no hidden refill.
+Runtime strategy defaults to dense; set `retrieval_strategy="hybrid"` to retain
+hybrid retrieval. The standalone backend's hybrid default, comparison eval and
+index profile remain unchanged; selecting a runtime strategy needs no rebuild.
+
+Dense (or explicit hybrid) retrieval -> canonical full-record hydration -> safety quarantine ->
+`verify_candidates()` -> full-record planner context. Accepted records retain
+retrieved order (fused order for hybrid), without scores in verifier inputs or planner context. Historical
+knowledge abstention (no candidates or no direct support) **continues planning
+and new research**; it never terminates the run by itself. Infrastructure/stale
+index errors and verifier errors stop explicitly at `error_stage="retrieval"`,
+not as successful abstention. The retrieval result and observed trace retain
+status/reason, accepted/rejected/candidate IDs, explicit filters, quarantine
+events and backend/verification latency splits, including on subsequent planning
+failure. Provider verification remains under `retrieval_verifier` telemetry;
+backend timings are not fabricated provider calls or token usage.
+
+Historical context is not fresh quantitative evidence. Tool execution, HITL,
+synthesis and grounding retain their existing contracts and evidence boundary.
 
 ## Evaluation
 
@@ -210,7 +255,7 @@ rates are null (not zero) when all negative queries failed. The CLI's default or
 a deterministic **harness check, not a model-quality measurement**. Real model
 verification quality requires an explicitly selected provider and human review.
 Answer grounding/usefulness remain the existing downstream evals, because this
-milestone does not change runtime synthesis/grounding.
+runtime integration does not change synthesis/grounding.
 
 Hermetic regression command:
 

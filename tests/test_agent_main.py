@@ -7,6 +7,7 @@ from agent.main import (
     create_provider_client,
     format_human,
     format_json,
+    main,
     run_request,
 )
 
@@ -109,6 +110,38 @@ class AgentMainTests(unittest.TestCase):
         ) as ollama:
             run_request("test", provider="fixture", client=Mock(), retrieval="ollama")
         ollama.assert_called_once_with()
+
+    def test_qdrant_option_forwards_injected_backend_filters_and_verifier(self):
+        client, retriever = Mock(), Mock()
+        filters = {"tags": ["cost"]}
+        with patch("agent.main.run_agent", return_value={"status": "ok"}) as run, patch("agent.main.OllamaEmbeddingClient") as legacy:
+            run_request("Research cost.", provider="fixture", client=client, retrieval="qdrant",
+                        knowledge_retriever=retriever, retrieval_filters=filters, candidate_limit=3)
+        kwargs = run.call_args.kwargs
+        self.assertEqual(kwargs["retrieval_backend"], "qdrant")
+        self.assertEqual(kwargs["retrieval_strategy"], "dense")
+        self.assertIs(kwargs["knowledge_retriever"], retriever)
+        self.assertIs(kwargs["retrieval_client"], client)
+        self.assertIsNone(kwargs["semantic_embedder"])
+        self.assertEqual(kwargs["retrieval_filters"], filters)
+        self.assertEqual(kwargs["candidate_limit"], 3)
+        legacy.assert_not_called()
+
+    def test_cli_accepts_qdrant_without_calling_services(self):
+        for flags, strategy in (([], "dense"), (["--retrieval-strategy", "hybrid"], "hybrid")):
+            with self.subTest(strategy=strategy), patch("agent.main.run_request", return_value={"status": "ok"}) as run, patch("builtins.print"):
+                self.assertEqual(main(["Research cost.", "--retrieval", "qdrant", *flags]), 0)
+            self.assertEqual(run.call_args.kwargs["retrieval"], "qdrant")
+            self.assertEqual(run.call_args.kwargs["retrieval_strategy"], strategy)
+
+    def test_qdrant_hybrid_strategy_is_forwarded_and_invalid_strategy_fails_before_provider_setup(self):
+        with patch("agent.main.run_agent", return_value={"status": "ok"}) as run:
+            run_request("Research cost.", provider="fixture", client=Mock(), retrieval="qdrant", retrieval_strategy="hybrid")
+        self.assertEqual(run.call_args.kwargs["retrieval_strategy"], "hybrid")
+        with patch("agent.main.create_provider_client") as provider:
+            with self.assertRaisesRegex(ValueError, "retrieval_strategy"):
+                run_request("Research cost.", retrieval="qdrant", retrieval_strategy="bad")
+        provider.assert_not_called()
 
     def test_cli_formats_compact_human_and_json_outputs(self):
         result = {

@@ -80,6 +80,7 @@ def run_request(
     provider: str = "deepseek",
     model: str = "",
     retrieval: str = "none",
+    retrieval_strategy: str = "dense",
     client: Any | None = None,
     embedding_client: Any | None = None,
     api_key: str | None = None,
@@ -89,8 +90,10 @@ def run_request(
     """Run one request through the existing integrated Agent runtime."""
     if provider not in {"deepseek", "openai", "fixture"}:
         raise ValueError(f"unsupported provider: {provider}")
-    if retrieval not in {"none", "ollama", "openai"}:
+    if retrieval not in {"none", "ollama", "openai", "qdrant"}:
         raise ValueError(f"unsupported retrieval mode: {retrieval}")
+    if retrieval_strategy not in ("dense", "hybrid"):
+        raise ValueError("retrieval_strategy must be dense or hybrid")
     if provider == "fixture" and client is None:
         raise ValueError("fixture provider requires an injected client")
     if history is not None:
@@ -127,7 +130,9 @@ def run_request(
         hitl_client=client,
         synthesis_client=client,
         grounding_client=client,
-        retrieval_client=client if semantic_embedder is not None else None,
+        retrieval_client=client if retrieval != "none" else None,
+        retrieval_backend="qdrant" if retrieval == "qdrant" else "legacy",
+        retrieval_strategy=retrieval_strategy,
         semantic_embedder=semantic_embedder,
         model=model,
         product_boundaries=product_boundaries,
@@ -190,9 +195,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default="")
     parser.add_argument(
         "--retrieval",
-        choices=("none", "ollama", "openai"),
+        choices=("none", "ollama", "openai", "qdrant"),
         default="none",
-        help="optional semantic retrieval embedding provider",
+        help="knowledge retrieval: qdrant backend, legacy ollama/openai semantic, or none (default)",
+    )
+    parser.add_argument(
+        "--retrieval-strategy", choices=("dense", "hybrid"), default="dense",
+        help="Qdrant retrieval strategy (default: dense); hybrid uses dense + BM25/RRF",
     )
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(argv)
@@ -203,6 +212,7 @@ def main(argv: list[str] | None = None) -> int:
             provider=args.provider,
             model=args.model,
             retrieval=args.retrieval,
+            retrieval_strategy=args.retrieval_strategy,
         )
     except Exception as exc:
         if args.as_json:

@@ -55,11 +55,14 @@ Tradar 聚焦于量化研究流程的 Agent 化，不试图覆盖投资决策、
 | AE-10 Answer synthesis 与实际 ToolResult evidence output binding | 已落地 |
 | AE-11 provider-call telemetry 与 run-level observability | 已落地 |
 | AE-12 runtime safety boundary 与 indirect-injection quarantine | 已落地 |
+| AE-14 Qdrant hybrid knowledge retrieval（BM25 + dense / RRF / canonical hydration / verification）与 opt-in runtime | 已落地 |
 | `research/` quantitative engine、factor analysis 与 backtest | 已落地 |
 
 `agent/agent.py::run_agent` 已把稳定 Tool 的正常请求路径接通：请求经过 safety/context/retrieval、planning、HITL、确定性执行与 `ResearchRun`，再由实际 `ToolResult` 形成有界 evidence，完成 answer synthesis、cited-evidence grounding，并返回最终答案与 telemetry。这是可验证的 Agent runtime，不等于 fully autonomous production loop：context compactor 目前未接入 `run_agent()`，memory recall 不会自动注入 context，HITL approval lifecycle 尚未接 executor resume 或 tool interception，approval resume/replan 仍未实现；调用方若不提供具体 action，HITL 默认使用 generic proposed action。
 
 Telemetry 记录 provider/model/stage、provider 返回的 usage tokens、provider latency 与完整 runtime wall-clock，并使用版本化配置估算成本，同时保留 per-stage、failure/terminal attribution。Safety 将 system/product rules 视为可信指令，将 user/retrieval/tool 内容视为不可信数据；明显不安全请求和 active indirect injection 会被确定性 block/quarantine，destructive action 仍经过 HITL。
+
+知识检索默认关闭；已显式建立 AE-14 索引后，可用 `python -m agent.main "研究请求" --retrieval qdrant` 启用 dense Qdrant → relevance verification → full-record context；`--retrieval-strategy hybrid` 可切换到 dense + BM25/RRF。`ollama` / `openai` 仍使用 legacy semantic retrieval。历史知识 `abstain` 不会结束请求：Agent 继续 planning / 新研究，并保留 retrieval trace；索引/基础设施或 verifier 错误则显式 fail closed。Runtime 不自动建索引，也不把历史记录当作新实验的 evidence。注入接口、过滤器与操作说明见 [retrieval README](resources/retrieval/README.md#agent-runtime-opt-in)。
 
 ## 架构快照 / Architecture Snapshot
 
