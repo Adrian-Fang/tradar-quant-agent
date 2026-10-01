@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import signal
 import stat
 import subprocess
 import sysconfig
@@ -151,6 +152,14 @@ class ExperimentArchitectureTests(unittest.TestCase):
 
         self.assertTrue(expected.issubset(config["python_library_paths"]))
         self.assertTrue(expected.issubset(config["python_path"]))
+
+    def test_cpu_limit_classification_handles_unshare_exit_status(self):
+        self.assertTrue(experiment_module._resource_limit_termination(1, 1.0, 1))
+        self.assertFalse(experiment_module._resource_limit_termination(1, 0.1, 1))
+        self.assertFalse(
+            experiment_module._resource_limit_termination(-signal.SIGSEGV, 1.0, 1)
+        )
+        self.assertFalse(experiment_module._resource_limit_termination(2, 0.1, 1))
 
     def test_schema_uses_structured_spec_without_source(self):
         schema = next(item for item in TOOL_SCHEMAS if item["name"] == "run_research_experiment")

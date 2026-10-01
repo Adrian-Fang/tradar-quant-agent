@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import resource
 import shutil
 import signal
 import subprocess
@@ -621,6 +622,20 @@ def _prepare_root(root: Path) -> None:
     (root.parent / "workspace").mkdir()
 
 
+def _resource_limit_termination(
+    return_code: int, cpu_seconds_used: float, cpu_limit_seconds: int
+) -> bool:
+    limit_signals = {signal.SIGKILL, signal.SIGXCPU}
+    return (
+        return_code in {-int(sig) for sig in limit_signals}
+        or return_code in {128 + int(sig) for sig in limit_signals}
+        or (
+            return_code > 0
+            and cpu_seconds_used >= cpu_limit_seconds - 0.05
+        )
+    )
+
+
 def _execute_isolated_source(
     program: str,
     *,
@@ -676,6 +691,7 @@ def _execute_isolated_source(
             str(config_path),
         ]
         try:
+            usage_before = resource.getrusage(resource.RUSAGE_CHILDREN)
             with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
                 process = subprocess.Popen(
                     command,
@@ -696,6 +712,7 @@ def _execute_isolated_source(
                         "error_type": "experiment_timeout",
                         "message": f"experiment exceeded {wall_timeout:g}s wall-time limit",
                     }
+            usage_after = resource.getrusage(resource.RUSAGE_CHILDREN)
         except OSError as exc:
             return {
                 "status": "error",
@@ -714,7 +731,15 @@ def _execute_isolated_source(
         try:
             payload = json.loads(stdout.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
-            if return_code < 0 or return_code in {137, 152}:
+            cpu_seconds_used = (
+                usage_after.ru_utime
+                + usage_after.ru_stime
+                - usage_before.ru_utime
+                - usage_before.ru_stime
+            )
+            if _resource_limit_termination(
+                return_code, cpu_seconds_used, cpu_seconds
+            ):
                 error_type = "experiment_resource_limit"
                 message = "experiment was terminated by a resource limit"
             else:
