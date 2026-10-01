@@ -62,7 +62,9 @@ Tradar 聚焦于量化研究流程的 Agent 化，不试图覆盖投资决策、
 
 Telemetry 记录 provider/model/stage、provider 返回的 usage tokens、provider latency 与完整 runtime wall-clock，并使用版本化配置估算成本，同时保留 per-stage、failure/terminal attribution。Safety 将 system/product rules 视为可信指令，将 user/retrieval/tool 内容视为不可信数据；明显不安全请求和 active indirect injection 会被确定性 block/quarantine，destructive action 仍经过 HITL。
 
-知识检索默认关闭；已显式建立 AE-14 索引后，可用 `python -m agent.main "研究请求" --retrieval qdrant` 启用 dense Qdrant → batched relevance verification → compact planning brief；synthesis/grounding 仍使用有界完整记录 evidence。`--retrieval-strategy hybrid` 可切换到 dense + BM25/RRF。`ollama` / `openai` 仍使用 legacy semantic retrieval。历史知识 `abstain` 不会结束请求：Agent 继续 planning / 新研究，并保留 retrieval trace；索引/基础设施或 verifier 错误则显式 fail closed。Runtime 不自动建索引，也不把历史记录当作新实验的 evidence。注入接口、过滤器与操作说明见 [retrieval README](resources/retrieval/README.md#agent-runtime-opt-in)。
+CLI 知识检索默认关闭；已显式建立 AE-14 索引后，可用 `python -m agent.main "研究请求" --retrieval qdrant` 启用 dense Qdrant → batched relevance verification → compact planning brief；synthesis/grounding 仍使用有界完整记录 evidence。HTTP `/v1/research` 默认使用同一 Qdrant/dense 知识路径，保留 history、单请求锁与响应契约；索引或 verifier 不可用时显式报错，不降级成无知识。`--retrieval-strategy hybrid` 可切换到 dense + BM25/RRF。`ollama` / `openai` 仍使用 legacy semantic retrieval。历史知识 `abstain` 不会结束请求：Agent 继续 planning / 新研究，并保留 retrieval trace；索引/基础设施或 verifier 错误则显式 fail closed。Runtime 不自动建索引，也不把历史记录当作新实验的 evidence。注入接口、过滤器与操作说明见 [retrieval README](resources/retrieval/README.md#agent-runtime-opt-in)。
+
+Deterministic safety gate 同时覆盖常见英文攻击及中文直接指令：忽略规则、暴露系统提示词、读取/输出密钥或凭据、绕过安全/审批。中文引号中的分析材料及非执行性的安全讨论不视为指令；这是有界命令模式，不是通用多语言分类器。
 
 Verified records 足以回答历史知识问题且 planning 返回 `no_action` 时，runtime 使用有界 `knowledge_record` evidence 完成 synthesis + grounding，保留 `knowledge-<research_id>` 引用和文件 hash/date/status 等 provenance；不创建 ResearchRun 或执行研究。若需要新计算，仍走稳定 Tool / Research Experiment，历史知识不会冒充本次执行结果。相关记录不代表完整支持：synthesis 可 abstain，grounding 不支持的答案会被 block。
 

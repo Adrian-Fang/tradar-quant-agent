@@ -69,6 +69,42 @@ _BLOCK_PATTERNS = (
     ),
 )
 
+# Narrow imperative forms, not topic/keyword classification. Clause anchoring
+# leaves analytical questions (e.g. "解释为什么不能打印 API key") usable.
+_CHINESE_COMMAND = r"(?:^|[，,。；;！？!?\n])\s*(?:请你|请|帮我|麻烦你|现在|顺便|你)?\s*"
+_CHINESE_END = r"(?:出来|给我|一下)?(?=\s*(?:$|[，,。；;！？!?\n]))"
+_CHINESE_BLOCK_PATTERNS = (
+    ("policy_override", re.compile(
+        _CHINESE_COMMAND + r"(?:忽略|无视|覆盖|忘掉|不遵守)\s*"
+        r"(?:(?:所有|之前的?|此前的?|系统的?|开发者的?|产品的?)\s*)*"
+        r"(?:规则|指令|政策|限制)" + _CHINESE_END,
+    )),
+    ("policy_exposure", re.compile(
+        _CHINESE_COMMAND + r"(?:"
+        r"(?:显示|展示|打印|输出|透露|泄露|导出)\s*(?:你的?|完整的?)?\s*"
+        r"(?:系统提示词?|开发者提示词?|system\s*prompt|developer\s*prompt)"
+        + _CHINESE_END + r"|把[^，,。；;！？!?\n]{0,32}"
+        r"(?:系统提示词?|开发者提示词?|system\s*prompt|developer\s*prompt)"
+        r"[^，,。；;！？!?\n]{0,32}(?:显示|展示|打印|输出|透露|泄露|导出)" + _CHINESE_END + r")",
+        re.IGNORECASE,
+    )),
+    ("secret_exfiltration", re.compile(
+        _CHINESE_COMMAND + r"(?:"
+        r"(?:显示|展示|打印|输出|发送|导出|读取|泄露|获取)\s*"
+        r"(?:运行环境里的?|环境中的?|你的?|所有的?)?\s*"
+        r"(?:API\s*keys?|密钥|密码|凭据|凭证|令牌|秘密|secrets?|credentials?|tokens?|\.env)"
+        + _CHINESE_END + r"|把[^，,。；;！？!?\n]{0,32}"
+        r"(?:API\s*keys?|密钥|密码|凭据|凭证|令牌|秘密|secrets?|credentials?|tokens?|\.env)"
+        r"[^，,。；;！？!?\n]{0,32}(?:显示|展示|打印|输出|发送|导出|读取|泄露)" + _CHINESE_END + r")",
+        re.IGNORECASE,
+    )),
+    ("policy_bypass", re.compile(
+        _CHINESE_COMMAND + r"(?:绕过|跳过|禁用|关闭|忽略)\s*"
+        r"(?:所有的?|系统的?)?\s*(?:安全|审批|批准|权限|授权)"
+        r"(?:检查|校验|流程|机制|限制)?" + _CHINESE_END,
+    )),
+)
+
 _ACTIVE_INJECTION = re.compile(
     r"(?:^|[.!?\n])\s*(?:[\{\[]\s*)?(?:please\s+)?"
     r"(?:(?:important|system|developer|instruction|instructions|command|directive)"
@@ -84,7 +120,7 @@ _STRUCTURED_INJECTION = re.compile(
 
 
 def _without_quotes(text: str) -> str:
-    return re.sub(r"(['\"])(?:\\.|(?!\1).)*\1|`[^`]*`", "", text)
+    return re.sub(r"(['\"])(?:\\.|(?!\1).)*\1|`[^`]*`|“[^”]*”|‘[^’]*’|「[^」]*」|『[^』]*』", "", text)
 
 
 def check_request_safety(
@@ -93,9 +129,9 @@ def check_request_safety(
     product_boundaries: list[str],
 ) -> dict[str, Any]:
     text = _without_quotes(
-        f"{user_request} {proposed_action.get('description', '')}"
+        f"{user_request}\n{proposed_action.get('description', '')}"
     )
-    for rule, pattern in _BLOCK_PATTERNS:
+    for rule, pattern in (*_BLOCK_PATTERNS, *_CHINESE_BLOCK_PATTERNS):
         if pattern.search(text):
             return {
                 "status": "blocked",

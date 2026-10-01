@@ -94,7 +94,7 @@ async def research(request: Request) -> JSONResponse:
         )
 
     try:
-        run_options = {"provider": "deepseek", "retrieval": "none"}
+        run_options = {"provider": "deepseek", "retrieval": "qdrant", "retrieval_strategy": "dense"}
         if history is not None:
             run_options["history"] = history
         result = await asyncio.to_thread(run_request, message, **run_options)
