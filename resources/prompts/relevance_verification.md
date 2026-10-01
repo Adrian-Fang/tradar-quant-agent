@@ -18,10 +18,21 @@ If any material item does not match, set `supported` to `false`. Do not silently
 
 If answering requires replacing a variable or condition, generalizing across scope, or relying on financial common sense, outside knowledge, or intuition not stated in the record, set `supported` to `false`. Use only the supplied record and do not fill gaps with plausible assumptions.
 
-Return exactly one JSON object with these fields:
+For a single `research_record` input, return exactly this JSON object:
 
 ```json
 {"supported": true, "reason": "short evidence-based explanation"}
 ```
+
+For a `research_records` array input, apply the same checks independently to
+each record. Never pool evidence across records to make an unsupported record
+pass. Return exactly:
+
+```json
+{"results": [{"research_id": "input ID", "supported": true, "reason": "short evidence-based explanation"}]}
+```
+
+Include every input `research_id` exactly once, with no other IDs or fields.
+`supported` must be a boolean and `reason` must be a string in both formats.
 
 Set `supported` to `true` only after all material constraints pass the checks above. The reason should briefly cite the matching evidence or the decisive mismatch; it is recorded for review and does not replace the boolean decision.

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import unittest
+from copy import deepcopy
+
+import pytest
 
 from agent.retrieval.semantic_retriever import prepare_semantic_corpus
-from agent.retrieval.relevance_verifier import retrieve_verified
+from agent.retrieval.relevance_verifier import retrieve_verified, verify_candidates, verify_record
 
 
 RECORDS = (
@@ -66,8 +69,13 @@ class FakeVerifierClient:
 
     def create(self, payload):
         body = json.loads(payload["input"])
-        research_id = body["research_record"]["research_id"]
         self.calls.append(body)
+        if "research_records" in body:
+            return {"output_text": json.dumps({"results": [
+                {"research_id": record["research_id"], "supported": self.decisions[record["research_id"]], "reason": "fake verifier result"}
+                for record in body["research_records"]
+            ]})}
+        research_id = body["research_record"]["research_id"]
         return {
             "output_text": json.dumps({
                 "supported": self.decisions[research_id],
@@ -178,27 +186,23 @@ class RetrievalRuntimeTests(unittest.TestCase):
         self.assertEqual(malformed["results"], [])
         self.assertEqual(malformed["errors"][0]["error_type"], "malformed_response")
 
-    def test_prior_supported_candidate_is_cleared_when_later_verification_errors(self):
+    def test_partial_batch_and_provider_errors_fail_closed(self):
         corpus, embedder = prepared([[1.0, 0.0], [0.8, 0.6], [0.0, 1.0]])
 
         class LaterErrorClient:
             def __init__(self, malformed):
                 self.malformed = malformed
                 self.calls = []
-                self.supported_calls = []
 
             def create(self, payload):
                 body = json.loads(payload["input"])
-                research_id = body["research_record"]["research_id"]
-                self.calls.append(research_id)
-                if research_id == "RR-A":
-                    self.supported_calls.append(research_id)
-                    return {"output_text": json.dumps({
-                        "supported": True,
-                        "reason": "accepted",
-                    })}
+                self.calls.append([record["research_id"] for record in body["research_records"]])
                 if self.malformed:
-                    return {"output_text": "not json"}
+                    # One supported row followed by an invalid row is atomic failure.
+                    return {"output_text": json.dumps({"results": [
+                        {"research_id": "RR-A", "supported": True, "reason": "accepted"},
+                        {"research_id": "RR-B", "supported": "yes", "reason": "invalid"},
+                    ]})}
                 raise RuntimeError("offline")
 
         for malformed, error_type in ((False, "provider_error"), (True, "malformed_response")):
@@ -212,11 +216,10 @@ class RetrievalRuntimeTests(unittest.TestCase):
                     prepared_corpus=corpus,
                 )
 
-                self.assertEqual(verifier.supported_calls, ["RR-A"])
-                self.assertEqual(verifier.calls, ["RR-A", "RR-B"])
+                self.assertEqual(verifier.calls, [["RR-A", "RR-B"]])
                 self.assertEqual(result["status"], "error")
                 self.assertEqual(result["results"], [])
-                self.assertEqual(result["errors"][0]["research_id"], "RR-B")
+                self.assertEqual([error["research_id"] for error in result["errors"]], ["RR-A", "RR-B"])
                 self.assertEqual(result["errors"][0]["error_type"], error_type)
 
     def test_metadata_filter_reaches_semantic_retrieval_before_verification(self):
@@ -234,6 +237,98 @@ class RetrievalRuntimeTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual([body["research_record"]["research_id"] for body in verifier.calls], ["RR-A"])
+
+
+DECISIONS = [
+    {"research_id": "RR-A", "supported": True, "reason": "A evidence"},
+    {"research_id": "RR-B", "supported": False, "reason": "B mismatch"},
+]
+
+
+@pytest.mark.parametrize("value", [
+    "not json", [], {}, {"results": {}}, {"results": []},
+    {"results": [DECISIONS[0]]},
+    {"results": [*DECISIONS, DECISIONS[0]]},
+    {"results": [DECISIONS[0], {**DECISIONS[1], "research_id": "RR-UNKNOWN"}]},
+    {"results": [DECISIONS[0], {**DECISIONS[1], "research_id": []}]},
+    {"results": [DECISIONS[0], {**DECISIONS[1], "supported": "false"}]},
+    {"results": [DECISIONS[0], {**DECISIONS[1], "supported": 1}]},
+    {"results": [DECISIONS[0], {**DECISIONS[1], "reason": None}]},
+    {"results": [DECISIONS[0], {**DECISIONS[1], "score": 1}]},
+    {"results": [DECISIONS[0], None]},
+    {"results": DECISIONS, "extra": True},
+])
+def test_batch_malformed_decisions_fail_atomically(value):
+    class Client:
+        calls = 0
+
+        def create(self, payload):
+            self.calls += 1
+            return {"output_text": value if isinstance(value, str) else json.dumps(value)}
+
+    client = Client()
+    result = verify_candidates("query", list(RECORDS[:2]), client=client)
+    assert client.calls == 1
+    assert result["status"] == "error" and result["results"] == []
+    assert [error["research_id"] for error in result["errors"]] == ["RR-A", "RR-B"]
+    assert all(error["error_type"] == "malformed_response" and error["error"] for error in result["errors"])
+
+
+def test_batch_reordered_response_preserves_input_order_and_per_record_reasons():
+    records = [deepcopy(record) for record in RECORDS]
+    for record in records:
+        record.update(score=1, matched_chunks=[{}], retrieval_debug="diagnostic only")
+
+    class Client:
+        calls = []
+
+        def create(self, payload):
+            self.calls.append(payload)
+            return {"output_text": json.dumps({"results": [
+                {"research_id": "RR-C", "supported": True, "reason": "C evidence"},
+                *reversed(DECISIONS),
+            ]})}
+
+    client = Client()
+    result = verify_candidates("query", records, client=client)
+    assert len(client.calls) == 1
+    assert [(record["research_id"], record["verification"]["reason"]) for record in result["results"]] == [("RR-A", "A evidence"), ("RR-C", "C evidence")]
+    assert result["rejected"] == [{"research_id": "RR-B", "reason": "B mismatch"}]
+    body = json.loads(client.calls[0]["input"])
+    assert set(body) == {"query", "research_records"}
+    assert [record["text"] for record in body["research_records"]] == [record["text"] for record in records]
+    assert all(not (set(record) & {"score", "matched_chunks", "retrieval_debug"}) for record in body["research_records"])
+    assert "Never pool evidence across records" in client.calls[0]["instructions"]
+
+
+@pytest.mark.parametrize("identity", [None, "", [], "RR-A"])
+def test_invalid_batch_candidate_identity_fails_before_provider(identity):
+    class Client:
+        def create(self, payload):
+            raise AssertionError("must not call provider")
+
+    result = verify_candidates("query", [RECORDS[0], {**RECORDS[1], "research_id": identity}], client=Client())
+    assert result["status"] == "error" and result["results"] == []
+    assert all(error["error_type"] == "invalid_candidates" for error in result["errors"])
+
+
+def test_batch_and_single_verification_preserve_labeled_eval_decisions():
+    from agent.retrieval.loader import load_research_records
+    from agent.retrieval.relevance_verifier_eval import CASES
+
+    records = load_research_records()
+    for case in CASES:
+        candidates = sorted(records, key=lambda record: record["research_id"] != case["research_id"])[:5]
+        decisions = {record["research_id"]: case["expected_supported"] if record["research_id"] == case["research_id"] else False for record in candidates}
+        client = FakeVerifierClient(decisions)
+        single = [verify_record(case["query"], record, client=client) for record in candidates]
+        batch_client = FakeVerifierClient(decisions)
+        batch = verify_candidates(case["query"], candidates, client=batch_client)
+        assert [record["research_id"] for record in batch["results"]] == [record["research_id"] for record, decision in zip(candidates, single) if decision["supported"]]
+        assert [row["research_id"] for row in batch["rejected"]] == [record["research_id"] for record, decision in zip(candidates, single) if not decision["supported"]]
+        assert batch["status"] == ("ok" if case["expected_supported"] else "abstain")
+        assert len(client.calls) == 5 and len(batch_client.calls) == 1
+        assert "expected_supported" not in json.dumps(batch_client.calls)
 
 
 if __name__ == "__main__":

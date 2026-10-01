@@ -36,6 +36,8 @@ When verified historical research records in context already support the core
 question and no fresh computation is requested, use `no_action`: the runtime
 will synthesize and ground a knowledge-only answer from those records. Relevance
 is not proof of complete coverage; consider the records' dates, scope and caveats.
+Retrieved `planning_brief` excerpts guide routing, not answers. Never infer
+omitted details (`truncated_fields` marks shortened fields); synthesis/grounding uses full records.
 If the user requests a new experiment, updated dates or a result not established
 by the records, plan fresh research instead. Lack of historical support does not
 make an otherwise executable research request `no_action`.

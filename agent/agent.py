@@ -218,6 +218,31 @@ def tool_results_to_evidence(tool_results: list[Any]) -> list[dict[str, str]]:
     return evidence
 
 
+def _knowledge_planning_brief(record: dict[str, Any]) -> dict[str, Any]:
+    """Decision-only excerpts; original verified records remain synthesis evidence."""
+    metadata, sections = record.get("metadata", {}), record.get("sections", {})
+    brief = {
+        "context_type": "planning_brief", "research_id": record["research_id"],
+        "scope": {key: metadata.get(key) for key in ("date", "market", "status")},
+        "truncated_fields": [],
+    }
+    for field, value in brief["scope"].items():
+        if isinstance(value, str) and len(value) > 80:
+            brief["scope"][field] = value[:80]
+            brief["truncated_fields"].append(f"scope.{field}")
+    for field, value, limit in (
+        ("title", record.get("title", ""), 100),
+        ("question", record.get("question", sections.get("Research Question", "")), 240),
+        ("method", sections.get("Method", ""), 160),
+        ("conclusion", sections.get("Conclusion", ""), 200),
+        ("caveats", sections.get("Caveats", ""), 160),
+    ):
+        brief[field] = value[:limit]
+        if len(value) > limit:
+            brief["truncated_fields"].append(field)
+    return brief
+
+
 def _knowledge_records_to_evidence(records: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Project verified historical records, never similarity or fresh execution results."""
     evidence, seen = [], set()
@@ -580,16 +605,19 @@ def run_agent(
             )
         # No historical support is not a verdict on whether new research is possible.
         for result in retrieval_result["results"]:
+            brief = _knowledge_planning_brief(result)
             item = {
                 "id": result["research_id"],
                 "kind": "retrieved_knowledge",
-                "text": result["text"],
+                "text": json.dumps(brief, ensure_ascii=False, separators=(",", ":")),
             }
-            for field in ("source", "provenance"):
-                if result.get(field):
-                    item[field] = result[field]
+            # Quarantine full source and raw projected fields, never only escaped JSON
+            # or truncated excerpts; details beyond the brief still cross no trust boundary.
+            raw_values = [result["text"], result.get("title", ""), result.get("question", "")]
+            raw_values.extend(result.get("sections", {}).values())
+            raw_values.extend(result.get("metadata", {}).get(field) for field in brief["scope"])
             event = quarantine_untrusted_text(
-                item["text"], source=f"retrieval:{item['id']}"
+                "\n".join(value for value in raw_values if isinstance(value, str)), source=f"retrieval:{item['id']}"
             )
             if event["status"] == "quarantined":
                 safety["events"].append(event)

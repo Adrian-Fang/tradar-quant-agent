@@ -177,7 +177,12 @@ hydrated from full canonical records, not snippets.
 evidence-field allowlist in `verify_record()` excludes all retrieval diagnostics
 (not just one score key), and avoids duplicating section text. It preserves fused order among
 accepted records; it is relevance **verification**, not a cross-encoder reranker.
-Malformed/provider errors retain the existing fail-closed behavior. Existing
+Multiple candidates share one provider call with independent per-record
+`research_id`/`supported`/`reason` decisions. Response IDs must match the complete
+input set exactly once; results are restored to input order. Any malformed row,
+missing/duplicate/unknown ID or provider error fails the entire batch closed.
+An empty candidate list makes no call; one candidate retains the single-record
+contract. No candidate limit is reduced. Existing
 `retrieve_verified()` remains the legacy semantic-retrieval wrapper.
 
 ## Agent runtime (opt-in)
@@ -211,7 +216,7 @@ hybrid retrieval. The standalone backend's hybrid default, comparison eval and
 index profile remain unchanged; selecting a runtime strategy needs no rebuild.
 
 Dense (or explicit hybrid) retrieval -> canonical full-record hydration -> safety quarantine ->
-`verify_candidates()` -> full-record planner context. Accepted records retain
+`verify_candidates()` -> compact planning briefs. Accepted records retain
 retrieved order (fused order for hybrid), without scores in verifier inputs or planner context. Historical
 knowledge abstention (no candidates or no direct support) **continues planning
 and new research**; it never terminates the run by itself. Infrastructure/stale
@@ -221,6 +226,14 @@ status/reason, accepted/rejected/candidate IDs, explicit filters, quarantine
 events and backend/verification latency splits, including on subsequent planning
 failure. Provider verification remains under `retrieval_verifier` telemetry;
 backend timings are not fabricated provider calls or token usage.
+
+Planning receives only identity/title, date/market/status, question (240 chars),
+method (160), conclusion (200), caveats (160), and explicit `truncated_fields`;
+title is capped at 100 chars and scope strings at 80. Findings, source paths/hashes, provenance prose,
+verification reasons and retrieval diagnostics are omitted from planning.
+Full raw source and projected fields are quarantined before planning, including
+text beyond excerpt bounds. Original verified records remain available for
+bounded synthesis/grounding evidence; briefs never replace factual evidence.
 
 Historical context is not fresh quantitative evidence. If verification succeeds
 and the initial planner returns `no_action`, selected, non-quarantined verified
@@ -301,6 +314,16 @@ Answer grounding/usefulness reuse the existing downstream contracts/evals.
 `resources/eval/agent.json` also includes knowledge-only success and grounding
 rejection traces, checked against deterministic actual runtime fixtures in
 `tests/test_agent_knowledge.py`. These do not measure real model answer quality.
+The AE-15 RR-010 benchmark compares the prior per-record/full-context shape to
+the batch/brief path with unchanged candidates and deterministic decisions:
+
+```bash
+python -m pytest -q -s tests/test_agent_knowledge.py -k efficiency_benchmark
+```
+
+It reports existing per-stage telemetry using synthetic fixture-token units,
+not real provider token/cost/latency measurements. Production telemetry still
+uses only provider-reported usage; no token estimator was added to runtime.
 
 Hermetic regression command:
 

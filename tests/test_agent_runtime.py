@@ -301,11 +301,11 @@ class AgentRuntimeTests(unittest.TestCase):
         ]
         retriever = Mock()
         retriever.search.return_value = {"results": records, "latency_ms": {"qdrant_ms": 2}, "chunks_returned": 8}
-        verifier = SequenceClient([
-            {"supported": True, "reason": "direct support"},
-            {"supported": False, "reason": "unrelated"},
-            {"supported": True, "reason": "direct support"},
-        ])
+        verifier = Client({"results": [
+            {"research_id": "RR-002", "supported": True, "reason": "direct support"},
+            {"research_id": "RR-001", "supported": False, "reason": "unrelated"},
+            {"research_id": "RR-003", "supported": True, "reason": "direct support"},
+        ]})
         planner = Client(plan("no_action"))
         synthesis = Client({"status": "success", "answer": "Full caveats [knowledge-RR-002]", "evidence_ids": ["knowledge-RR-002"]})
         grounding = Client({"answer": "ignored", "claims": [{"claim": "Full caveats", "evidence_ids": ["knowledge-RR-002"], "grounding": "supported"}]})
@@ -330,16 +330,17 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(trace["latency_ms"]["runtime_total_ms"], 0)
         self.assertEqual(result["observed"]["context"]["selected_ids"], ["request_scope", "RR-002", "RR-003"])
         context_input = json.loads(planner.calls[0]["input"])["user_request"]
-        self.assertIn("Full caveats", context_input)
-        self.assertIn("Public source", context_input)
-        self.assertLess(context_input.index("Full method RR-002"), context_input.index("Full method RR-003"))
-        for call in verifier.calls:
-            record = json.loads(call["input"])["research_record"]
+        self.assertIn("planning_brief", context_input)
+        self.assertNotIn("Public source", context_input)
+        self.assertNotIn("Full method", context_input)
+        self.assertLess(context_input.index("RR-002"), context_input.index("RR-003"))
+        self.assertEqual(len(verifier.calls), 1)
+        for record in json.loads(verifier.calls[0]["input"])["research_records"]:
             self.assertIn("# Provenance", record["text"])
             self.assertNotIn("score", record)
             self.assertNotIn("matched_chunks", record)
-            self.assertIn("untrusted data", call["instructions"])
-        self.assertEqual([call["stage"] for call in result["telemetry"]["calls"]], ["retrieval_verifier"] * 3 + ["planning", "synthesis", "grounding"])
+        self.assertIn("untrusted data", verifier.calls[0]["instructions"])
+        self.assertEqual([call["stage"] for call in result["telemetry"]["calls"]], ["retrieval_verifier", "planning", "synthesis", "grounding"])
 
     def test_qdrant_abstain_empty_or_unsupported_continues_new_research(self):
         for records in ([], [{"research_id": "RR-001", "text": "A different study."}]):

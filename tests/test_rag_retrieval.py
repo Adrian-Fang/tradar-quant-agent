@@ -160,8 +160,11 @@ def test_hydrated_qdrant_records_reach_agent_context_without_live_services(backe
     assert verified["text"] == record["text"] and "score" not in verified
     planner_input = json.loads(planner.create.call_args.args[0]["input"])["user_request"]
     context = json.loads(planner_input.split("\n\nContext:\n", 1)[1])
-    assert context[1]["text"] == record["text"]
-    assert context[1]["provenance"] == record["provenance"]
+    brief = json.loads(context[1]["text"])
+    assert brief["context_type"] == "planning_brief"
+    assert brief["question"] == record["question"][:240]
+    assert brief["conclusion"] == record["sections"]["Conclusion"][:200]
+    assert "provenance" not in context[1] and "# Provenance" not in context[1]["text"]
     assert result["status"] == "ok"
     assert result["observed"]["outcome"]["status"] == "success"
     assert result["research_run"] is None and result["hitl"] is None
@@ -454,10 +457,15 @@ def test_full_fake_ingestion_hybrid_hydration_verification_and_eval(backend):
 
     class Client:
         def create(self, payload):
-            record = json.loads(payload["input"])["research_record"]
-            assert "score" not in record and "matched_chunks" not in record
-            assert "# Method" in record["text"] and "# Provenance" in record["text"]
-            return {"output_text": json.dumps({"supported": record["research_id"] == "RR-001", "reason": "fixture support"})}
+            body = json.loads(payload["input"])
+            records = body.get("research_records", [body.get("research_record")])
+            decisions = []
+            for record in records:
+                assert "score" not in record and "matched_chunks" not in record
+                assert "# Method" in record["text"] and "# Provenance" in record["text"]
+                decisions.append({"research_id": record["research_id"], "supported": record["research_id"] == "RR-001", "reason": "fixture support"})
+            value = {"results": decisions} if "research_records" in body else {key: decisions[0][key] for key in ("supported", "reason")}
+            return {"output_text": json.dumps(value)}
 
     def verified(query, **filters):
         return verify_candidates(query, retriever.retrieve(query, **filters), client=Client())
@@ -890,3 +898,23 @@ def test_qdrant_eval_cli_summary_and_full_json_preserve_results(monkeypatch, cap
         assert rows[-1].endswith("2/2") and "-/-/-" in rows[-1]
         assert "not model-quality measurement" in output and "--json" in output
         assert "provider failed" not in output and '"cases"' not in output
+
+
+def test_qdrant_eval_oracle_accepts_batch_and_preserves_comparative_metrics(monkeypatch, capsys):
+    from agent.retrieval import eval as evaluation
+    records = [{"research_id": identity, "text": "full canonical fixture"} for identity in ("RR-001", "RR-010")]
+    cases = [{"id": "cost", "query": "recorded costs", "relevant_ids": ["RR-010"]},
+             {"id": "unknown", "query": "unrelated", "relevant_ids": []}]
+    monkeypatch.setattr(evaluation, "CASES", cases)
+    monkeypatch.setattr(evaluation, "load_json", lambda path: [])
+    monkeypatch.setattr(evaluation, "retrieve", lambda query, **filters: records)
+    monkeypatch.setattr("agent.retrieval.hybrid_retriever.KnowledgeRetriever", lambda: SimpleNamespace(search=lambda query, **filters: {"results": records, "latency_ms": {}}))
+    monkeypatch.setattr("sys.argv", ["eval", "--qdrant", "--verification-provider", "fixture", "--json"])
+    evaluation.main()
+    result = json.loads(capsys.readouterr().out)["evaluations"]
+    verified = result["hybrid+verification"]
+    assert [row["top_results"] for row in verified["cases"]] == [["RR-010"], []]
+    assert verified["macro"]["error_count"] == 0
+    assert verified["macro"]["mrr@5"] == 1
+    assert verified["macro"]["no_relevance"]["abstention_rate"] == 1
+    assert all(result[mode]["macro"]["mrr@5"] == .5 for mode in ("lexical", "bm25", "dense", "hybrid"))

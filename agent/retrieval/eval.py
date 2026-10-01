@@ -355,8 +355,15 @@ def main() -> None:
         class OracleClient:
             def create(self, payload):
                 body = json.loads(payload["input"])
-                supported = body["research_record"]["research_id"] in oracle[body["query"]]
-                return FixtureClient({"expected_supported": supported}).create(payload)
+                if "research_record" in body:
+                    supported = body["research_record"]["research_id"] in oracle[body["query"]]
+                    return FixtureClient({"expected_supported": supported}).create(payload)
+                return {"output_text": json.dumps({"results": [
+                    {"research_id": record["research_id"],
+                     "supported": record["research_id"] in oracle[body["query"]],
+                     "reason": "deterministic fixture classification"}
+                    for record in body["research_records"]
+                ]})}
 
         client = OracleClient() if args.verification_provider == "fixture" else DeepSeekChatClient() if args.verification_provider == "deepseek" else OpenAIResponsesClient()
         model = "deepseek-chat" if args.verification_provider == "deepseek" else "gpt-4.1-mini"

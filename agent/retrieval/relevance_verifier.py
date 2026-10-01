@@ -30,15 +30,61 @@ def _parse_response(text: str) -> tuple[dict[str, Any] | None, str | None]:
         parsed = json.loads(text.strip())
     except json.JSONDecodeError as exc:
         return None, f"response is not valid JSON: {exc}"
+    error = _decision_error(parsed)
+    return (None, error) if error else (parsed, None)
+
+
+def _decision_error(parsed: Any) -> str | None:
     if not isinstance(parsed, dict):
-        return None, "response JSON must be an object"
+        return "response JSON must be an object"
     if set(parsed) != {"supported", "reason"}:
-        return None, "response must contain exactly supported and reason"
+        return "response must contain exactly supported and reason"
     if not isinstance(parsed["supported"], bool):
-        return None, "response.supported must be a boolean"
+        return "response.supported must be a boolean"
     if not isinstance(parsed["reason"], str):
-        return None, "response.reason must be a string"
-    return parsed, None
+        return "response.reason must be a string"
+    return None
+
+
+def _verify_batch(query: str, candidates: list[dict[str, Any]], *, client: Any, model: str) -> list[dict[str, Any]]:
+    ids = [record.get("research_id") for record in candidates]
+    error_type, error = "invalid_candidates", "candidate research_ids must be unique nonempty strings"
+    if all(isinstance(value, str) and value for value in ids) and len(set(ids)) == len(ids):
+        payload = {
+            "model": model, "instructions": PROMPT,
+            "input": json.dumps({"query": query, "research_records": [
+                {key: record[key] for key in RECORD_EVIDENCE_FIELDS if key in record}
+                for record in candidates
+            ]}, ensure_ascii=False),
+        }
+        try:
+            response = client.create(payload)
+        except Exception as exc:
+            error_type, error = "provider_error", f"{type(exc).__name__}: {exc}"
+        else:
+            error_type = "malformed_response"
+            try:
+                parsed = json.loads(_response_text(response).strip())
+                if not isinstance(parsed, dict) or set(parsed) != {"results"} or not isinstance(parsed["results"], list):
+                    raise ValueError("response must contain exactly results (an array)")
+                decisions = {}
+                for index, row in enumerate(parsed["results"]):
+                    if not isinstance(row, dict) or set(row) != {"research_id", "supported", "reason"}:
+                        raise ValueError(f"response.results[{index}] must contain exactly research_id, supported and reason")
+                    identity = row["research_id"]
+                    if not isinstance(identity, str) or identity not in ids or identity in decisions:
+                        raise ValueError(f"response.results[{index}].research_id is unknown or duplicated")
+                    shape_error = _decision_error({key: row[key] for key in ("supported", "reason")})
+                    if shape_error:
+                        raise ValueError(f"response.results[{index}]: {shape_error}")
+                    decisions[identity] = {**row, "status": "supported" if row["supported"] else "unsupported"}
+                if set(decisions) != set(ids):
+                    raise ValueError("response.results must include every input research_id exactly once")
+                return [decisions[identity] for identity in ids]
+            except (ValueError, TypeError) as exc:
+                error = str(exc)
+    # A partial batch can never publish a supported record, even if some rows parsed.
+    return [{"status": "error", "error_type": error_type, "error": error} for _ in candidates]
 
 
 def verify_record(
@@ -125,8 +171,11 @@ def verify_candidates(query: str, candidates: list[dict[str, Any]], *, client: A
     results = []
     rejected = []
     errors = []
-    for candidate in candidates:
-        verification = verify_record(query, candidate, client=client, model=model)
+    verifications = (
+        [verify_record(query, candidates[0], client=client, model=model)] if len(candidates) == 1
+        else _verify_batch(query, candidates, client=client, model=model)
+    )
+    for candidate, verification in zip(candidates, verifications):
         if verification["status"] == "supported":
             result = dict(candidate)
             result["verification"] = {
@@ -141,7 +190,7 @@ def verify_candidates(query: str, candidates: list[dict[str, Any]], *, client: A
             })
         else:
             errors.append({
-                "research_id": candidate["research_id"],
+                "research_id": candidate.get("research_id"),
                 "error_type": verification["error_type"],
                 "error": verification["error"],
             })
