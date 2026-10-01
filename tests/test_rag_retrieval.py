@@ -135,9 +135,14 @@ def test_hydrated_qdrant_records_reach_agent_context_without_live_services(backe
     verifier.create.return_value = {"output_text": json.dumps({"supported": True, "reason": "cost defaults directly support the query"})}
     planner = Mock(provider="fixture", model="fixture")
     planner.create.return_value = {"output_text": json.dumps({"status": "no_action", "steps": [], "reason": "fixture"})}
+    synthesis = Mock(provider="fixture", model="fixture")
+    synthesis.create.return_value = {"output_text": json.dumps({"status": "success", "answer": "10 bp buy and 15 bp sell [knowledge-RR-010]", "evidence_ids": ["knowledge-RR-010"]})}
+    grounding = Mock(provider="fixture", model="fixture")
+    grounding.create.return_value = {"output_text": json.dumps({"answer": "ignored", "claims": [{"claim": "10 bp buy and 15 bp sell", "evidence_ids": ["knowledge-RR-010"], "grounding": "supported"}]})}
     result = run_agent(
         "What are the canonical transaction cost assumptions?", planner_client=planner,
         retrieval_backend="qdrant", knowledge_retriever=retriever, retrieval_client=verifier,
+        synthesis_client=synthesis, grounding_client=grounding,
         retrieval_strategy=strategy,
         retrieval_filters={"research_id": "RR-010"}, candidate_limit=1,
     )
@@ -158,6 +163,13 @@ def test_hydrated_qdrant_records_reach_agent_context_without_live_services(backe
     assert context[1]["text"] == record["text"]
     assert context[1]["provenance"] == record["provenance"]
     assert result["status"] == "ok"
+    assert result["observed"]["outcome"]["status"] == "success"
+    assert result["research_run"] is None and result["hitl"] is None
+    assert result["grounding"]["fully_grounded"]
+    knowledge = json.loads(result["evidence"][0]["text"])
+    assert knowledge["evidence_type"] == "knowledge_record"
+    assert knowledge["provenance"]["source_hash"] == record["source_hash"]
+    assert "score" not in knowledge and knowledge["content"] == record["text"]
 
 
 def test_public_corpus_has_no_private_messaging_identifiers():

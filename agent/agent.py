@@ -218,6 +218,36 @@ def tool_results_to_evidence(tool_results: list[Any]) -> list[dict[str, str]]:
     return evidence
 
 
+def _knowledge_records_to_evidence(records: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Project verified historical records, never similarity or fresh execution results."""
+    evidence, seen = [], set()
+    for record in records:
+        if record.get("verification", {}).get("supported") is not True:
+            continue
+        research_id = record["research_id"]
+        if research_id in seen:
+            continue
+        seen.add(research_id)
+        metadata = record.get("metadata", {})
+        payload = {
+            "evidence_type": "knowledge_record", "research_id": research_id,
+            "title": record.get("title"), "content": record["text"],
+            "provenance": {
+                "source_path": record.get("path"), "source_hash": record.get("source_hash"),
+                "source_type": record.get("source"), "source_ref": record.get("source_ref", []),
+                "record_date": metadata.get("date"), "record_status": metadata.get("status"),
+            },
+        }
+        text = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        # ponytail: whole records capped at 12k chars; section-preserving excerpts if the corpus grows.
+        if len(text) > 12000:
+            raise ValueError(f"knowledge record {research_id} exceeds the 12000-character evidence limit")
+        evidence.append({"id": f"knowledge-{research_id}", "text": text})
+        if len(evidence) == 5:
+            break
+    return evidence
+
+
 def _finish(
     *,
     context_ids: list[str],
@@ -314,6 +344,58 @@ def _finish(
         "error_stage": error_stage,
         "error": error,
     }
+
+
+def _synthesize_and_ground(
+    user_request: str, bound_evidence: list[dict[str, str]], *,
+    synthesis_client: Any, grounding_client: Any, model: str, telemetry: RunTelemetry,
+    answer: str | None = None, evidence: list[dict[str, str]] | None = None,
+    conversation_history: list[dict[str, str]] | None = None, **finish_args: Any,
+) -> dict[str, Any]:
+    """The same answer/evidence contract for knowledge and executed research."""
+    finish_args["telemetry"] = telemetry
+    synthesis = None
+    if synthesis_client is not None:
+        result = synthesize_answer(
+            user_request, bound_evidence,
+            client=TelemetryClient(SafetyClient(synthesis_client), telemetry, stage="synthesis", model=model),
+            model=model, conversation_history=conversation_history,
+        )
+        if result["status"] == "error":
+            return _finish(**finish_args, grounding=None, outcome="error", status="error",
+                           error_type=result["error_type"], error_stage="synthesis", error=result["error"],
+                           evidence=bound_evidence)
+        synthesis = result["result"]
+        answer = synthesis["answer"]
+        cited_ids = set(synthesis["evidence_ids"])
+        evidence = [item for item in bound_evidence if item["id"] in cited_ids]
+        if synthesis["status"] == "insufficient_evidence":
+            return _finish(**finish_args, grounding=None, outcome="abstain", answer=answer,
+                           evidence=evidence, synthesis=synthesis)
+    elif answer is None and evidence is None:
+        raise ValueError("synthesis_client is required to answer from evidence")
+
+    grounding, grounding_trace = None, None
+    if answer is not None:
+        if grounding_client is None or evidence is None:
+            raise ValueError("grounding_client and evidence are required with answer")
+        result = verify_answer_grounding(
+            answer, evidence,
+            client=TelemetryClient(SafetyClient(grounding_client), telemetry, stage="grounding", model=model),
+            model=model,
+        )
+        if result["status"] == "error":
+            return _finish(**finish_args, grounding=None, outcome="error", status="error",
+                           error_type=result["error_type"], error_stage="grounding", error=result["error"],
+                           answer=answer, evidence=evidence, synthesis=synthesis)
+        grounding = result["assessment"]
+        grounding_trace = {
+            "fully_grounded": grounding["fully_grounded"],
+            "labels": [claim["grounding"] for claim in grounding["claims"]],
+        }
+    outcome = "blocked" if grounding_trace and not grounding_trace["fully_grounded"] else "success"
+    return _finish(**finish_args, grounding=grounding, grounding_trace=grounding_trace,
+                   outcome=outcome, answer=answer, evidence=evidence, synthesis=synthesis)
 
 
 def run_agent(
@@ -553,6 +635,50 @@ def run_agent(
     plan = planned["plan"]
     planning = {"status": plan["status"], "steps": plan["steps"]}
     if plan["status"] != "ready":
+        if plan["status"] == "no_action" and retrieval_result and retrieval_result["status"] == "ok":
+            safe_ids = {item["id"] for item in selected if item["kind"] == "retrieved_knowledge"}
+            records = [record for record in retrieval_result["results"] if record["research_id"] in safe_ids]
+            try:
+                knowledge_evidence = _knowledge_records_to_evidence(records)
+            except ValueError as exc:
+                return _finish(
+                    context_ids=[item["id"] for item in selected], planning=planning, steps=[],
+                    retrieval=retrieval_trace, retrieval_result=retrieval_result,
+                    research_run=None, grounding=None, hitl=None, plan=plan,
+                    outcome="error", status="error", error_type="knowledge_evidence_limit",
+                    error_stage="context", error=str(exc), safety=safety, telemetry=telemetry,
+                )
+            safe_knowledge = []
+            for item in knowledge_evidence:
+                snapshot = json.loads(item["text"])
+                untrusted_text = "\n".join(value for value in (
+                    snapshot["content"], snapshot["title"], *snapshot["provenance"].values(),
+                    *snapshot["provenance"]["source_ref"],
+                ) if isinstance(value, str))
+                event = quarantine_untrusted_text(untrusted_text, source=f"knowledge_evidence:{item['id']}")
+                if event["status"] == "quarantined":
+                    safety["events"].append(event)
+                else:
+                    safe_knowledge.append(item)
+            retrieval_trace["knowledge_evidence_ids"] = [item["id"] for item in safe_knowledge]
+            if knowledge_evidence and not safe_knowledge:
+                safety.update({"status": "blocked", "rule": "untrusted_instruction_injection",
+                               "reason": "all knowledge evidence was quarantined"})
+                return _finish(
+                    context_ids=[item["id"] for item in selected], planning=planning, steps=[],
+                    retrieval=retrieval_trace, retrieval_result=retrieval_result,
+                    research_run=None, grounding=None, hitl=None, plan=plan,
+                    outcome="blocked", safety=safety, telemetry=telemetry,
+                )
+            if safe_knowledge:
+                return _synthesize_and_ground(
+                    user_request, safe_knowledge, synthesis_client=synthesis_client,
+                    grounding_client=grounding_client, model=model, telemetry=telemetry,
+                    conversation_history=conversation_history,
+                    context_ids=[item["id"] for item in selected], planning=planning, steps=[],
+                    retrieval=retrieval_trace, retrieval_result=retrieval_result,
+                    research_run=None, hitl=None, plan=plan, safety=safety,
+                )
         if plan["status"] == "no_action" and _is_capability_request(user_request):
             answer, capability_evidence, grounding = _capability_answer()
             evidence_ids = [item["id"] for item in capability_evidence]
@@ -842,138 +968,19 @@ def run_agent(
             safety=safety,
             telemetry=telemetry,
         )
-    synthesis = None
-    synthesized_answer = None
-    if synthesis_client is not None:
-        synthesis_result = synthesize_answer(
-            user_request,
-            bound_evidence,
-            client=TelemetryClient(
-                SafetyClient(synthesis_client),
-                telemetry,
-                stage="synthesis",
-                model=model,
-            ),
-            model=model,
-            conversation_history=conversation_history,
-        )
-        if synthesis_result["status"] == "error":
-            return _finish(
-                context_ids=[item["id"] for item in selected],
-                planning=planning,
-                steps=steps,
-                retrieval=retrieval_trace,
-                research_run=run,
-                grounding=None,
-                hitl=hitl_trace,
-                outcome="error",
-                plan=plan,
-                retrieval_result=retrieval_result,
-                status="error",
-                error_type=synthesis_result["error_type"],
-                error_stage="synthesis",
-                error=synthesis_result["error"],
-                evidence=bound_evidence,
-                safety=safety,
-                telemetry=telemetry,
-                loop=loop_trace,
-            )
-        synthesis = synthesis_result["result"]
-        synthesized_answer = synthesis["answer"]
-        cited_ids = set(synthesis["evidence_ids"])
-        bound_evidence = [item for item in bound_evidence if item["id"] in cited_ids]
-        if synthesis["status"] == "insufficient_evidence":
-            return _finish(
-                context_ids=[item["id"] for item in selected],
-                planning=planning,
-                steps=steps,
-                retrieval=retrieval_trace,
-                research_run=run,
-                grounding=None,
-                hitl=hitl_trace,
-                outcome="abstain",
-                plan=plan,
-                retrieval_result=retrieval_result,
-                answer=synthesized_answer,
-                evidence=bound_evidence,
-                synthesis=synthesis,
-                safety=safety,
-                telemetry=telemetry,
-                loop=loop_trace,
-            )
-    elif answer is None and evidence is None:
-        raise ValueError("synthesis_client is required after successful execution")
-
-    grounding = None
-    grounding_trace = None
-    if synthesis_client is not None:
-        answer = synthesized_answer
-        evidence = bound_evidence
-    if answer is not None:
-        if grounding_client is None or evidence is None:
-            raise ValueError("grounding_client and evidence are required with answer")
-        grounding_result = verify_answer_grounding(
-            answer,
-            evidence,
-            client=TelemetryClient(
-                SafetyClient(grounding_client),
-                telemetry,
-                stage="grounding",
-                model=model,
-            ),
-            model=model,
-        )
-        if grounding_result["status"] == "error":
-            return _finish(
-                context_ids=[item["id"] for item in selected],
-                planning=planning,
-                steps=steps,
-                retrieval=retrieval_trace,
-                research_run=run,
-                grounding=None,
-                hitl=hitl_trace,
-                outcome="error",
-                plan=plan,
-                retrieval_result=retrieval_result,
-                status="error",
-                error_type=grounding_result["error_type"],
-                error_stage="grounding",
-                error=grounding_result["error"],
-                answer=answer,
-                evidence=evidence,
-                synthesis=synthesis,
-                safety=safety,
-                telemetry=telemetry,
-                loop=loop_trace,
-            )
-        grounding = grounding_result["assessment"]
-        grounding_trace = {
-            "fully_grounded": grounding["fully_grounded"],
-            "labels": [claim["grounding"] for claim in grounding["claims"]],
-        }
-
-    outcome = (
-        "blocked"
-        if grounding_trace and not grounding_trace["fully_grounded"]
-        else "success"
-    )
-    return _finish(
+    return _synthesize_and_ground(
+        user_request, bound_evidence, synthesis_client=synthesis_client,
+        grounding_client=grounding_client, model=model, telemetry=telemetry,
+        conversation_history=conversation_history, answer=answer, evidence=evidence,
         context_ids=[item["id"] for item in selected],
         planning=planning,
         steps=steps,
         retrieval=retrieval_trace,
         research_run=run,
-        grounding=grounding,
-        grounding_trace=grounding_trace,
         hitl=hitl_trace,
-        outcome=outcome,
         plan=plan,
         retrieval_result=retrieval_result,
-        answer=answer,
-        evidence=evidence,
-        synthesis=synthesis,
         safety=safety,
-        telemetry=telemetry,
         loop=loop_trace,
     )
 

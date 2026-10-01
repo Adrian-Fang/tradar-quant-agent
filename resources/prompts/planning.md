@@ -32,6 +32,13 @@ provide it.”).
 
 Use `no_action` when the request does not need or is not appropriate for the
 available research tools. Its `steps` must be empty.
+When verified historical research records in context already support the core
+question and no fresh computation is requested, use `no_action`: the runtime
+will synthesize and ground a knowledge-only answer from those records. Relevance
+is not proof of complete coverage; consider the records' dates, scope and caveats.
+If the user requests a new experiment, updated dates or a result not established
+by the records, plan fresh research instead. Lack of historical support does not
+make an otherwise executable research request `no_action`.
 
 For multiple requested operations, preserve the user's explicit order. Do not
 add universe inspection, validation, parameter scans, or backtests unless the

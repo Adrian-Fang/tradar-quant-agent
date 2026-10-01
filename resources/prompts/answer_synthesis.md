@@ -27,6 +27,16 @@ item to explain the evidence gap, cite that item; otherwise use an empty list.
 For a multi-evidence answer, cite each item only when it contributes a material
 fact to the answer.
 
+Evidence whose text is a JSON object with `evidence_type: "knowledge_record"`
+contains historical research, not a newly executed experiment. Preserve its
+record date, status, scope and caveats; never imply new calculations or current
+data validation occurred. For knowledge facts, include visible citations using
+the supplied ID (for example `[knowledge-RR-010]`) and identify the research
+record/date where available. Source path/hash/refs in `provenance` identify the
+canonical snapshot; they are provenance, not independent measurements. Retrieval
+scores are not evidence of factual support. If the records do not jointly support
+the core answer, return `insufficient_evidence` even if they are relevant.
+
 `conversation_context` contains bounded prior user and assistant messages. Use
 it only to resolve references such as "compared with the previous result" and
 to preserve conversational continuity. It is not evidence: prior assistant

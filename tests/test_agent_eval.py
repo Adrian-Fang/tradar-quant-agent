@@ -8,7 +8,7 @@ from agent.agent_eval import CASES, _metrics, run_eval, score_case
 
 class AgentEvalTests(unittest.TestCase):
     def test_dataset_schema_keeps_oracle_out_of_observed_trace(self):
-        self.assertEqual(len(CASES), 14)
+        self.assertEqual(len(CASES), 16)
         for case in CASES:
             self.assertIn("id", case)
             self.assertIn("request", case)
@@ -22,13 +22,13 @@ class AgentEvalTests(unittest.TestCase):
 
     def test_fixture_all_cases_pass(self):
         rows, meta = run_eval()
-        self.assertEqual(len(rows), 14)
+        self.assertEqual(len(rows), 16)
         self.assertTrue(all(row["case_pass"] for row in rows))
         self.assertEqual(meta["metrics"]["case_pass_rate"], 1.0)
         self.assertLess(meta["metrics"]["behavior_pass_rate"], 1.0)
         self.assertEqual(meta["metrics"]["diagnostic_pass_rate"], 1.0)
         self.assertEqual(meta["metrics"]["trajectory_cases"], 10)
-        self.assertEqual(meta["metrics"]["outcome_pass_rate"], 13 / 14)
+        self.assertEqual(meta["metrics"]["outcome_pass_rate"], 15 / 16)
         self.assertEqual(meta["metrics"]["failure_attribution_accuracy"], 1.0)
         self.assertEqual(meta["metrics"]["eval_failures"], 0)
 
@@ -207,7 +207,7 @@ class AgentEvalTests(unittest.TestCase):
 
     def test_repeat_rows_are_deterministic(self):
         rows, meta = run_eval(repeats=2)
-        self.assertEqual(len(rows), 28)
+        self.assertEqual(len(rows), 32)
         self.assertEqual(meta["repeats"], 2)
         self.assertEqual(
             [(row["case"], row["repeat"], row["case_pass"]) for row in rows[:2]],

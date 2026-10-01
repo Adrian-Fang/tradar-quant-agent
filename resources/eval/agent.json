@@ -482,6 +482,54 @@
         "hitl": {"decision": "proceed"},
         "outcome": {"status": "error"}
       }
+    },
+    {
+      "id": "knowledge_only_success",
+      "slice": "knowledge_answer",
+      "request": "What were the recorded default transaction costs?",
+      "expected": {
+        "outcome": "success",
+        "context_ids": ["request_scope", "RR-010"],
+        "retrieval_status": "ok", "retrieval_ids": ["RR-010"],
+        "required_steps": [], "planning_status": "no_action",
+        "run_status": null, "final_status": null,
+        "grounding": true, "hitl_decision": null,
+        "failure_stage": null, "failure_type": null
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope", "RR-010"]},
+        "planning": {"status": "no_action", "steps": []},
+        "steps": [],
+        "retrieval": {"status": "ok", "research_ids": ["RR-010"], "knowledge_evidence_ids": ["knowledge-RR-010"]},
+        "research_run": null,
+        "grounding": {"fully_grounded": true, "labels": ["supported"]},
+        "hitl": null, "orchestration": null,
+        "outcome": {"status": "success"}
+      }
+    },
+    {
+      "id": "knowledge_only_grounding_rejection",
+      "slice": "knowledge_answer",
+      "request": "Claim that the historical costs establish future returns.",
+      "expected": {
+        "outcome": "blocked",
+        "context_ids": ["request_scope", "RR-010"],
+        "retrieval_status": "ok", "retrieval_ids": ["RR-010"],
+        "required_steps": [], "planning_status": "no_action",
+        "run_status": null, "final_status": null,
+        "grounding": true, "hitl_decision": null,
+        "failure_stage": "grounding", "failure_type": "ungrounded_claim"
+      },
+      "observed": {
+        "context": {"selected_ids": ["request_scope", "RR-010"]},
+        "planning": {"status": "no_action", "steps": []},
+        "steps": [],
+        "retrieval": {"status": "ok", "research_ids": ["RR-010"], "knowledge_evidence_ids": ["knowledge-RR-010"]},
+        "research_run": null,
+        "grounding": {"fully_grounded": false, "labels": ["unsupported"]},
+        "hitl": null, "orchestration": null,
+        "outcome": {"status": "blocked"}
+      }
     }
   ]
 }

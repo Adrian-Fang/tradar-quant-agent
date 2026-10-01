@@ -64,6 +64,8 @@ Telemetry 记录 provider/model/stage、provider 返回的 usage tokens、provid
 
 知识检索默认关闭；已显式建立 AE-14 索引后，可用 `python -m agent.main "研究请求" --retrieval qdrant` 启用 dense Qdrant → relevance verification → full-record context；`--retrieval-strategy hybrid` 可切换到 dense + BM25/RRF。`ollama` / `openai` 仍使用 legacy semantic retrieval。历史知识 `abstain` 不会结束请求：Agent 继续 planning / 新研究，并保留 retrieval trace；索引/基础设施或 verifier 错误则显式 fail closed。Runtime 不自动建索引，也不把历史记录当作新实验的 evidence。注入接口、过滤器与操作说明见 [retrieval README](resources/retrieval/README.md#agent-runtime-opt-in)。
 
+Verified records 足以回答历史知识问题且 planning 返回 `no_action` 时，runtime 使用有界 `knowledge_record` evidence 完成 synthesis + grounding，保留 `knowledge-<research_id>` 引用和文件 hash/date/status 等 provenance；不创建 ResearchRun 或执行研究。若需要新计算，仍走稳定 Tool / Research Experiment，历史知识不会冒充本次执行结果。相关记录不代表完整支持：synthesis 可 abstain，grounding 不支持的答案会被 block。
+
 ## 架构快照 / Architecture Snapshot
 
 ```text

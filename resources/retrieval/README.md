@@ -222,8 +222,51 @@ events and backend/verification latency splits, including on subsequent planning
 failure. Provider verification remains under `retrieval_verifier` telemetry;
 backend timings are not fabricated provider calls or token usage.
 
-Historical context is not fresh quantitative evidence. Tool execution, HITL,
-synthesis and grounding retain their existing contracts and evidence boundary.
+Historical context is not fresh quantitative evidence. If verification succeeds
+and the initial planner returns `no_action`, selected, non-quarantined verified
+records may answer a historical question through the **same synthesis and
+grounding contracts** as executed research. No ResearchRun, HITL or executor is
+created on this knowledge-only route. Verification is relevance, not proof of
+complete coverage: synthesis can still return `insufficient_evidence` and abstain;
+unsupported/contradicted/unverifiable grounding blocks the answer.
+Direct `run_agent()` callers must supply synthesis and grounding clients for
+knowledge answers, just as for executed answers; the CLI supplies both already.
+
+The evidence outer contract remains exactly `{id, text}`. Knowledge IDs are
+`knowledge-<research_id>`; `text` is compact JSON with:
+
+```json
+{
+  "evidence_type": "knowledge_record",
+  "research_id": "RR-010",
+  "title": "...",
+  "content": "full canonical record body, including caveats and provenance",
+  "provenance": {
+    "source_path": "resources/knowledge/research/rr-010-trading-cost-defaults.md",
+    "source_hash": "<canonical file SHA256>",
+    "source_type": "research_record",
+    "source_ref": [],
+    "record_date": "2026-09-01",
+    "record_status": "validated"
+  }
+}
+```
+
+Missing optional provenance is null/empty, never invented. Projection uses an
+explicit field allowlist; scores, matched chunks and retrieval diagnostics are
+excluded. At most five unique verified records are projected, each serialized
+`text` at most 12,000 characters. Oversized records fail closed with
+`knowledge_evidence_limit` at `context`, rather than silently truncating facts.
+Projected content/provenance is quarantined again before model calls. Synthesis
+must visibly cite knowledge IDs and preserve historical date/status/scope; only
+cited evidence proceeds to grounding and the public evidence list. Provider and
+malformed-answer errors remain explicit at synthesis/grounding, with retrieval
+traces and normal provider token/latency telemetry preserved.
+
+If planning returns `ready`, deterministic tools / Research Experiment execute
+normally. Their `step-<n>-<tool>` evidence remains unchanged, and historical
+records are **not** substituted for or mixed into fresh execution evidence.
+`needs_input` remains clarification; retrieval abstention still continues planning.
 
 ## Evaluation
 
@@ -254,13 +297,16 @@ queries only; total/valid/error counts expose availability separately. No-answer
 rates are null (not zero) when all negative queries failed. The CLI's default oracle verifier is explicitly
 a deterministic **harness check, not a model-quality measurement**. Real model
 verification quality requires an explicitly selected provider and human review.
-Answer grounding/usefulness remain the existing downstream evals, because this
-runtime integration does not change synthesis/grounding.
+Answer grounding/usefulness reuse the existing downstream contracts/evals.
+`resources/eval/agent.json` also includes knowledge-only success and grounding
+rejection traces, checked against deterministic actual runtime fixtures in
+`tests/test_agent_knowledge.py`. These do not measure real model answer quality.
 
 Hermetic regression command:
 
 ```bash
 python -m pytest -q tests/test_rag_retrieval.py tests/test_retrieval.py tests/test_retrieval_relevance_verifier.py tests/test_retrieval_runtime.py
+python -m pytest -q tests/test_agent_knowledge.py tests/test_agent_output_binding.py tests/test_agent_eval.py
 ```
 
 The SDK request-model contract test needs the pinned dependency but no live

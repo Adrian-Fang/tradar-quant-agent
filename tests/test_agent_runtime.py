@@ -307,9 +307,12 @@ class AgentRuntimeTests(unittest.TestCase):
             {"supported": True, "reason": "direct support"},
         ])
         planner = Client(plan("no_action"))
+        synthesis = Client({"status": "success", "answer": "Full caveats [knowledge-RR-002]", "evidence_ids": ["knowledge-RR-002"]})
+        grounding = Client({"answer": "ignored", "claims": [{"claim": "Full caveats", "evidence_ids": ["knowledge-RR-002"], "grounding": "supported"}]})
         filters = {"tags": ["cost"], "date": {"gte": "2025-01-01"}, "include_superseded": True}
         result = run_agent(
             "研究交易成本", planner_client=planner, retrieval_client=verifier,
+            synthesis_client=synthesis, grounding_client=grounding,
             retrieval_backend="qdrant", retrieval_strategy="hybrid", knowledge_retriever=retriever,
             retrieval_filters=filters, market="a-share", topic="cost", record_status="validated", candidate_limit=3,
         )
@@ -336,7 +339,7 @@ class AgentRuntimeTests(unittest.TestCase):
             self.assertNotIn("score", record)
             self.assertNotIn("matched_chunks", record)
             self.assertIn("untrusted data", call["instructions"])
-        self.assertEqual([call["stage"] for call in result["telemetry"]["calls"]], ["retrieval_verifier"] * 3 + ["planning"])
+        self.assertEqual([call["stage"] for call in result["telemetry"]["calls"]], ["retrieval_verifier"] * 3 + ["planning", "synthesis", "grounding"])
 
     def test_qdrant_abstain_empty_or_unsupported_continues_new_research(self):
         for records in ([], [{"research_id": "RR-001", "text": "A different study."}]):
