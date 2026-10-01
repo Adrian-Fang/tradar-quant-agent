@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from .loader import load_research_records
+from .qdrant_store import filter_spec, matches_filter
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+|[\u4e00-\u9fff]+")
@@ -37,6 +38,10 @@ def retrieve(
     market: str | None = None,
     topic: str | None = None,
     status: str | None = None,
+    tags: list[str] | None = None,
+    research_id: str | None = None,
+    date: dict | None = None,
+    include_superseded: bool = True,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
     if limit < 1:
@@ -46,9 +51,16 @@ def retrieve(
     if not query_tokens:
         return []
 
+    condition = filter_spec({"tags": tags, "research_id": research_id, "date": date, "include_superseded": include_superseded})
+    records = load_research_records()
+    superseded = {key for record in records for key in record["metadata"].get("supersedes", [])}
     matches = []
-    for record in load_research_records():
+    for record in records:
         metadata = record["metadata"]
+        payload = {**metadata, "date": f"{metadata.get('date', '')}T00:00:00Z",
+                   "is_superseded": metadata.get("status") == "superseded" or record["research_id"] in superseded}
+        if not matches_filter(payload, condition):
+            continue
         if market is not None and str(metadata.get("market", "")).casefold() != market.casefold():
             continue
         if topic is not None and str(metadata.get("topic", "")).casefold() != topic.casefold():

@@ -6,8 +6,8 @@ topic: Volume-confirmed platform breakout
 strategy: 20D adjusted-close breakout with VR5 buckets
 status: rejected
 tags: [breakout, volume, event-study, execution, episode-dedup]
-source_type: slack
-source_ref: C0BTC7LU07L/1788142209.838549
+source_type: research_record
+source_ref: []
 artifacts: [scripts/volume_breakout/volume_platform_breakout.py]
 supersedes: []
 ---
@@ -38,4 +38,4 @@ H1/H3/H5/H10/H20 是机制诊断，不是策略 exit；结果使用 adjusted pri
 
 # Provenance
 
-Slack `#tradar-research`：volume-platform-breakout-001 线程 `1788142209.838549`。
+研究结果摘要；相关实验文件标识见 artifacts。原始运行日志未随记录发布。

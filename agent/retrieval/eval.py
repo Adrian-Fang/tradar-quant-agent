@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from time import perf_counter
+import argparse
+import json
+
 from ..core.providers import OllamaEmbeddingClient
 from ..core.resources import load_json
 from .semantic_retriever import prepare_semantic_corpus, retrieve_semantic
@@ -17,6 +21,11 @@ def run_case(
     k_values: tuple[int, ...],
     result_scores: list[float | None] | None = None,
 ) -> dict:
+    # Score records, never chunks. Preserve the first occurrence and its score.
+    unique = list(dict.fromkeys(result_ids))
+    if result_scores is not None:
+        result_scores = [result_scores[result_ids.index(key)] for key in unique]
+    result_ids = unique
     relevant_ids = set(case["relevant_ids"])
     row = {
         "case": case["id"],
@@ -31,6 +40,7 @@ def run_case(
         0,
     )
     row["reciprocal_rank"] = 1 / first_rank if first_rank else 0.0
+    row["reciprocal_rank@5"] = 1 / first_rank if 0 < first_rank <= 5 else 0.0
     if relevant_ids:
         row["first_relevant_rank"] = first_rank or None
         row["first_relevant_research_id"] = (
@@ -64,26 +74,38 @@ def run_case(
     return row
 
 
-def run_eval(k_values: tuple[int, ...] = (1, 3, 5), retriever=retrieve) -> dict:
+def run_eval(k_values: tuple[int, ...] = (1, 3, 5), retriever=retrieve, *, cases=None, measure_latency: bool = False) -> dict:
     k_values = tuple(sorted(set(k_values)))
     if not k_values or any(k < 1 for k in k_values):
         raise ValueError("k_values must contain positive integers")
 
     max_k = max(k_values)
     rows = []
-    for case in CASES:
+    for case in CASES if cases is None else cases:
         filters = {
             key: case[key]
-            for key in ("market", "topic", "status")
+            for key in ("market", "topic", "status", "tags", "research_id", "date", "include_superseded")
             if key in case
         }
-        results = retriever(case["query"], limit=max_k, **filters)
-        rows.append(run_case(
+        tick = perf_counter()
+        outcome = retriever(case["query"], limit=max_k, **filters)
+        results = outcome["results"] if isinstance(outcome, dict) else outcome
+        row = run_case(
             case,
             [result["research_id"] for result in results],
             k_values,
             [result.get("score") for result in results],
-        ))
+        )
+        if measure_latency:
+            row["latency_ms"] = outcome.get("latency_ms", {}) if isinstance(outcome, dict) else {}
+            row["latency_ms"] = {**row["latency_ms"], "eval_total_ms": (perf_counter() - tick) * 1000}
+        if isinstance(outcome, dict) and outcome.get("status") == "error":
+            row["error"] = outcome.get("errors", outcome.get("reason", "retrieval failed"))
+            row["false_positive"] = None
+            for k in k_values:
+                for metric in ("hit", "recall", "precision"):
+                    row[f"{metric}@{k}"] = None
+        rows.append(row)
 
     groups = {"overall": rows}
     for row in rows:
@@ -91,7 +113,8 @@ def run_eval(k_values: tuple[int, ...] = (1, 3, 5), retriever=retrieve) -> dict:
 
     aggregate = {}
     for name, group in groups.items():
-        relevant_rows = [row for row in group if row["relevant"]]
+        valid_rows = [row for row in group if "error" not in row]
+        relevant_rows = [row for row in valid_rows if row["relevant"]]
         macro_by_k = None
         mrr = None
         if relevant_rows:
@@ -105,22 +128,35 @@ def run_eval(k_values: tuple[int, ...] = (1, 3, 5), retriever=retrieve) -> dict:
             mrr = sum(row["reciprocal_rank"] for row in relevant_rows) / len(relevant_rows)
 
         no_relevance_rows = [row for row in group if not row["relevant"]]
-        false_positive_count = sum(row["false_positive"] for row in no_relevance_rows)
+        valid_negatives = [row for row in no_relevance_rows if "error" not in row]
+        false_positive_count = sum(row["false_positive"] for row in valid_negatives)
         aggregate[name] = {
             "mrr": mrr,
+            "mrr@5": sum(row["reciprocal_rank@5"] for row in relevant_rows) / len(relevant_rows) if relevant_rows else None,
+            "error_count": sum("error" in row for row in group),
+            "valid_query_count": len(valid_rows),
             "by_k": macro_by_k,
             "no_relevance": {
                 "count": len(no_relevance_rows),
+                "valid_count": len(valid_negatives),
+                "error_count": len(no_relevance_rows) - len(valid_negatives),
                 "false_positive_count": false_positive_count,
                 "false_positive_rate": (
-                    false_positive_count / len(no_relevance_rows)
-                    if no_relevance_rows else 0.0
+                    false_positive_count / len(valid_negatives)
+                    if valid_negatives else (None if no_relevance_rows else 0.0)
                 ),
                 "empty_result_count": sum(
-                    not row["top_results"] for row in no_relevance_rows
+                    not row["top_results"] for row in valid_negatives
                 ),
+                "abstention_rate": sum(not row["top_results"] for row in valid_negatives) / len(valid_negatives) if valid_negatives else (None if no_relevance_rows else 0.0),
             },
         }
+        if measure_latency:
+            keys = {key for row in group for key in row["latency_ms"]}
+            aggregate[name]["mean_latency_ms"] = {
+                key: sum(row["latency_ms"][key] for row in group if key in row["latency_ms"]) / sum(key in row["latency_ms"] for row in group)
+                for key in sorted(keys)
+            }
 
     return {
         "k_values": list(k_values),
@@ -132,12 +168,46 @@ def run_eval(k_values: tuple[int, ...] = (1, 3, 5), retriever=retrieve) -> dict:
     }
 
 
+def compare_retrievers(retrievers: dict, *, cases=None, measure_latency: bool = True) -> dict:
+    """One oracle shared across lexical/BM25/dense/hybrid/verified implementations."""
+    return {name: run_eval(retriever=retriever, cases=cases, measure_latency=measure_latency)
+            for name, retriever in retrievers.items()}
+
+
+def print_comparison(evaluations: dict) -> None:
+    """Compact presentation of existing aggregates; no recomputation or mutation."""
+    def number(value, precision=3):
+        return "-" if value is None else f"{value:.{precision}f}"
+
+    rows = [["Mode", "Recall@1/3/5", "Precision@1/3/5", "MRR@5", "FP rate", "Abstain", "Mean ms", "Errors"]]
+    for name, evaluation in evaluations.items():
+        macro = evaluation["macro"]
+        by_k = macro["by_k"] or {}
+        negative = macro["no_relevance"]
+        rows.append([
+            name,
+            *["/".join(number(by_k.get(str(k), {}).get(metric)) for k in (1, 3, 5))
+              for metric in ("recall@k", "precision@k")],
+            number(macro["mrr@5"]), number(negative["false_positive_rate"]),
+            number(negative["abstention_rate"]),
+            number(macro.get("mean_latency_ms", {}).get("eval_total_ms"), 1),
+            f"{macro['error_count']}/{len(evaluation['cases'])}",
+        ])
+    widths = [max(len(cell) for cell in column) for column in zip(*rows)]
+    for index, row in enumerate(rows):
+        print("  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip())
+        if index == 0:
+            print("  ".join("-" * width for width in widths))
+    print("Mean ms: end-to-end per query. Errors: failed/total queries; quality metrics exclude failures.")
+    print("'-' = unmeasured. Full cases, slices and latency splits: --json.")
+
+
 def threshold_sweep(
     rows: list[dict],
     thresholds: tuple[float, ...] = (0.0, 0.25, 0.5, 0.75, 1.0),
 ) -> list[dict]:
-    positive_rows = [row for row in rows if row["relevant"]]
-    negative_rows = [row for row in rows if not row["relevant"]]
+    positive_rows = [row for row in rows if row["relevant"] and "error" not in row]
+    negative_rows = [row for row in rows if not row["relevant"] and "error" not in row]
     return [
         {
             "threshold": threshold,
@@ -217,12 +287,14 @@ def print_report(label: str, evaluation: dict, *, abstention_analysis: bool = Fa
             print(f"MRR={macro['mrr']:.3f}")
 
         no_relevance = macro["no_relevance"]
+        rate = no_relevance["false_positive_rate"]
+        rate_text = "not measured" if rate is None else f"{rate:.3f}"
         print(
             "No-relevance queries | "
             f"false positives={no_relevance['false_positive_count']}/"
-            f"{no_relevance['count']} "
-            f"({no_relevance['false_positive_rate']:.3f}) | "
-            f"empty={no_relevance['empty_result_count']}"
+            f"{no_relevance['valid_count']} valid "
+            f"({rate_text}) | empty={no_relevance['empty_result_count']} | "
+            f"errors={macro['error_count']}"
         )
 
     if not abstention_analysis:
@@ -264,6 +336,55 @@ def print_report(label: str, evaluation: dict, *, abstention_analysis: bool = Fa
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--qdrant", action="store_true", help="compare the five AE-14 retrieval modes")
+    parser.add_argument("--json", action="store_true", help="emit full comparison JSON (requires --qdrant)")
+    parser.add_argument("--verification-provider", choices=("fixture", "deepseek", "openai"), default="fixture")
+    args = parser.parse_args()
+    if args.json and not args.qdrant:
+        parser.error("--json requires --qdrant")
+    if args.qdrant:
+        from .hybrid_retriever import KnowledgeRetriever
+        from .relevance_verifier import verify_candidates
+        from .relevance_verifier_eval import FixtureClient
+        from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient
+        knowledge = KnowledgeRetriever()
+        cases = list(CASES) + list(load_json("eval/rag_retrieval.json"))
+        oracle = {case["query"]: set(case["relevant_ids"]) for case in cases}
+
+        class OracleClient:
+            def create(self, payload):
+                body = json.loads(payload["input"])
+                supported = body["research_record"]["research_id"] in oracle[body["query"]]
+                return FixtureClient({"expected_supported": supported}).create(payload)
+
+        client = OracleClient() if args.verification_provider == "fixture" else DeepSeekChatClient() if args.verification_provider == "deepseek" else OpenAIResponsesClient()
+        model = "deepseek-chat" if args.verification_provider == "deepseek" else "gpt-4.1-mini"
+
+        def verified(query, **filters):
+            result = knowledge.search(query, **filters)
+            tick = perf_counter()
+            outcome = verify_candidates(query, result["results"], client=client, model=model)
+            outcome["latency_ms"] = {**result["latency_ms"], "verification_ms": (perf_counter() - tick) * 1000}
+            return outcome
+
+        implementations = {
+            "lexical": lambda query, **filters: retrieve(query, **{"include_superseded": False, **filters}),
+            "bm25": lambda query, **filters: knowledge.search(query, mode="bm25", **filters),
+            "dense": lambda query, **filters: knowledge.search(query, mode="dense", **filters),
+            "hybrid": knowledge.search,
+            "hybrid+verification": verified,
+        }
+        report = {"verification_provider": args.verification_provider,
+                  "fixture_is_quality_measurement": False,
+                  "evaluations": compare_retrievers(implementations, cases=cases)}
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            print(f"Verification provider: {args.verification_provider}" +
+                  (" (oracle harness, not model-quality measurement)" if args.verification_provider == "fixture" else ""))
+            print_comparison(report["evaluations"])
+        return
     print_report("Lexical Retrieval", run_eval())
     try:
         embedder = OllamaEmbeddingClient()

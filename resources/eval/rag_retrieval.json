@@ -1,0 +1,8 @@
+{"version": "ae14-v1", "cases": [
+  {"id": "rag_exact_id", "slice": "exact_identifier", "query": "RR-010 canonical trading costs", "relevant_ids": ["RR-010"]},
+  {"id": "rag_filtered_cost", "slice": "metadata_filter", "query": "买卖交易成本的标准口径是什么？", "market": "multi-asset", "status": "validated", "tags": ["transaction-costs", "buy-cost"], "date": {"gte": "2026-01-01", "lte": "2026-12-31"}, "relevant_ids": ["RR-010"]},
+  {"id": "rag_wrong_market", "slice": "metadata_filter", "query": "交易成本默认多少？", "market": "US-equity", "relevant_ids": []},
+  {"id": "rag_deleted", "slice": "deleted_record", "query": "已删除记录 RR-DELETED 的研究结论", "research_id": "RR-DELETED", "relevant_ids": []},
+  {"id": "rag_superseded_status", "slice": "superseded_record", "query": "已被取代的相对强弱研究结论", "status": "superseded", "include_superseded": false, "relevant_ids": []},
+  {"id": "rag_chunk_collapse", "slice": "chunk_deduplication", "query": "RR-001 相对强弱的研究问题、方法、结果和局限", "research_id": "RR-001", "relevant_ids": ["RR-001"]}
+]}

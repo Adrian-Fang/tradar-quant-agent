@@ -25,7 +25,7 @@ FAKE_RECORDS = (
         "question": "question B",
         "tags": [],
         "text": "body B",
-        "source": "slack",
+        "source": "research_record",
         "source_ref": "source-b",
         "provenance": "provenance-b",
     },
@@ -37,7 +37,7 @@ FAKE_RECORDS = (
         "question": "question A",
         "tags": [],
         "text": "body A",
-        "source": "slack",
+        "source": "research_record",
         "source_ref": "source-a",
         "provenance": "provenance-a",
     },
@@ -49,7 +49,7 @@ FAKE_RECORDS = (
         "question": "question C",
         "tags": [],
         "text": "body C",
-        "source": "slack",
+        "source": "research_record",
         "source_ref": "source-c",
         "provenance": "provenance-c",
     },
@@ -258,7 +258,7 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual([result["research_id"] for result in results], ["RR-A", "RR-B"])
         self.assertEqual(len(calls[0]), 3)
         self.assertEqual(calls[0][1:], ["B\nbody B", "A\nbody A"])
-        self.assertEqual(results[0]["source"], "slack")
+        self.assertEqual(results[0]["source"], "research_record")
         self.assertTrue(results[0]["provenance"])
 
     def test_prepared_semantic_eval_embeds_documents_once(self):

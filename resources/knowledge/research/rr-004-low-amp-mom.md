@@ -6,8 +6,8 @@ topic: Low-amplitude momentum and executable mapping
 strategy: LOW_AMP_MOM full-residual continuous rank exposure
 status: rejected
 tags: [momentum, low-volatility, residual, transaction-costs, execution]
-source_type: slack
-source_ref: [C0BTC7LU07L/1787911823.197079, C0BTC7LU07L/1787912461.251609, C0BTC7LU07L/1787913551.228009]
+source_type: research_record
+source_ref: []
 artifacts: [scripts/stocks_active/low_amp_mom_conditional.py]
 supersedes: []
 ---
@@ -18,7 +18,7 @@ supersedes: []
 
 # Method
 
-月末截面、H20、2021-current。因子定义是 20 日内最低振幅 20% 交易日的累计 close-to-close return；full residual controls 为 `NORMAL_M`、log market cap、`VOL20`、log ADV20。组合 mapping 用 T close→T+1 open、existing buyable/sellable，研究线程使用 buy15bp/sell25bp；后续时点诊断比较 CC20、ON1、EXEC20、NEXT_REBAL，且另做 winsorized 诊断。
+月末截面、H20、2021-current。因子定义是 20 日内最低振幅 20% 交易日的累计 close-to-close return；full residual controls 为 `NORMAL_M`、log market cap、`VOL20`、log ADV20。组合 mapping 用 T close→T+1 open、existing buyable/sellable，本研究使用 buy15bp/sell25bp；后续时点诊断比较 CC20、ON1、EXEC20、NEXT_REBAL，且另做 winsorized 诊断。
 
 # Key Findings
 
@@ -38,4 +38,4 @@ supersedes: []
 
 # Provenance
 
-Slack `#tradar-research`：LOW_AMP_MOM-001 `1787911823.197079`、-002 `1787912461.251609`、-003 `1787913551.228009`。
+研究结果摘要；相关实验文件标识见 artifacts。原始运行日志未随记录发布。

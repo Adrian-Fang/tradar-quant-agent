@@ -1,0 +1,9 @@
+{
+  "profile_version": "ae14-v1",
+  "schema_version": "1.0",
+  "chunker_version": "sections-v1",
+  "alias": "tradar_research",
+  "dense": {"name": "dense", "size": 1024, "distance": "Cosine", "model": "qwen3-embedding:0.6b", "revision": "ollama-digest-at-index-time", "query_instruction": "Given a research question, retrieve research records that directly support answering it."},
+  "sparse": {"name": "bm25", "model": "qdrant/bm25", "modifier": "idf"},
+  "retrieval": {"branch_top_k": 20, "chunk_top_k": 20, "record_top_k": 5, "rrf_k": 60}
+}

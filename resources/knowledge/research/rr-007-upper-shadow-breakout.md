@@ -6,8 +6,8 @@ topic: Limit-up upper-shadow breakout event
 strategy: 仙人指路 / upper-shadow breakout
 status: rejected
 tags: [limit-up, upper-shadow, breakout, event-study, rejected]
-source_type: slack
-source_ref: C0BTC7LU07L/1788784335.256449
+source_type: research_record
+source_ref: []
 artifacts: [scripts/event/upper_shadow_breakout.py]
 supersedes: []
 ---
@@ -36,4 +36,4 @@ supersedes: []
 
 # Provenance
 
-Slack `#tradar-research`：event-upper-shadow-breakout-001 线程 `1788784335.256449`。
+研究结果摘要；相关实验文件标识见 artifacts。原始运行日志未随记录发布。

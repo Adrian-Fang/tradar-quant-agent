@@ -750,17 +750,21 @@ class ExperimentSandboxTests(unittest.TestCase):
             return _execute_isolated_source(source, data_path=data_path, **kwargs)
 
     def test_host_secrets_and_dotenv_are_not_visible(self):
-        source = isolated_program(
-            "import os\n"
-            "def probe():\n"
-            "    return {\n"
-            "        'secret': os.environ.get('TRADAR_TEST_SECRET'),\n"
-            "        'repo_dotenv': os.path.exists('/app/.env'),\n"
-            "        'host_dotenv': os.path.exists('/home/ubuntu/tradar-quant-agent/.env'),\n"
-            "    }"
-        )
-        with patch.dict(os.environ, {"TRADAR_TEST_SECRET": "must-not-leak"}):
-            result = self.execute(source)
+        with tempfile.TemporaryDirectory() as host_directory:
+            host_dotenv = Path(host_directory) / ".env"
+            host_dotenv.write_text("TRADAR_TEST_SECRET=must-not-leak\n")
+            self.assertTrue(host_dotenv.is_file())
+            source = isolated_program(
+                "import os\n"
+                "def probe():\n"
+                "    return {\n"
+                "        'secret': os.environ.get('TRADAR_TEST_SECRET'),\n"
+                "        'repo_dotenv': os.path.exists('/app/.env'),\n"
+                f"        'host_dotenv': os.path.exists({str(host_dotenv)!r}),\n"
+                "    }"
+            )
+            with patch.dict(os.environ, {"TRADAR_TEST_SECRET": "must-not-leak"}):
+                result = self.execute(source)
 
         self.assertEqual(result["status"], "success")
         self.assertEqual(

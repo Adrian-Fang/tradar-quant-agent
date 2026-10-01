@@ -3,6 +3,8 @@ openai==3.7.0
 pandas==3.0.3
 pyarrow==23.0.0
 PyYAML==6.0.3
+qdrant-client==1.19.0
+pydantic==2.13.4
 scipy==1.18.0
 python-dotenv==1.2.1
 tickflow==0.1.24

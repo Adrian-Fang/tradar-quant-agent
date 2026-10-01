@@ -6,8 +6,8 @@ topic: Relative strength versus Shanghai Composite and short-term reversal
 strategy: RS_Pct252 × Excess20 structure
 status: inconclusive
 tags: [relative-strength, short-term-reversal, cross-sectional, factor]
-source_type: slack
-source_ref: [C0BTC7LU07L/1788162013.552609, C0BTC7LU07L/1788162447.857919]
+source_type: research_record
+source_ref: []
 artifacts: [scripts/relative_momentum/relative_strength_vs_index.py]
 supersedes: []
 ---
@@ -38,4 +38,4 @@ supersedes: []
 
 # Provenance
 
-Slack `#tradar-research`：relative-strength-vs-index-002 线程 `1788162013.552609`；relative-reversal-decompose-001 线程 `1788162447.857919`。
+研究结果摘要；相关实验文件标识见 artifacts。原始运行日志未随记录发布。

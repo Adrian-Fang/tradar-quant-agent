@@ -6,8 +6,8 @@ topic: Canonical asymmetric transaction-cost defaults
 strategy: Research framework cost handling
 status: validated
 tags: [transaction-costs, buy-cost, sell-cost, backtest-infrastructure]
-source_type: slack
-source_ref: C0BTC7LU07L/1788249905.545929
+source_type: research_record
+source_ref: [research/vector_backtest.py]
 artifacts: [research/vector_backtest.py]
 supersedes: []
 ---
@@ -36,4 +36,4 @@ supersedes: []
 
 # Provenance
 
-Slack `#tradar-research`：global-trading-cost-defaults-001 线程 `1788249905.545929`。
+研究框架成本口径的验证摘要；相关实现见 `research/vector_backtest.py`。原始 round-trip 运行日志未随记录发布。

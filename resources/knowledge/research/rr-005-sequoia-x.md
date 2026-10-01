@@ -6,8 +6,8 @@ topic: Source-exact public scanner reproduction
 strategy: Sequoia-X TurtleTrade / MaVolume / HighTightFlag / LimitUpShakeout / UptrendLimitDown / RpsBreakout
 status: rejected
 tags: [source-reproduction, TurtleTrade, MaVolume, HighTightFlag, event-scanner, momentum]
-source_type: slack
-source_ref: [C0BTC7LU07L/1788696332.511649, C0BTC7LU07L/1788698577.506799]
+source_type: research_record
+source_ref: []
 artifacts: [scripts/sequoia_x_repro/common.py, scripts/sequoia_x_repro/turtle_trade.py, scripts/sequoia_x_repro/ma_volume.py, scripts/sequoia_x_repro/high_tight_flag.py, scripts/sequoia_x_repro/limit_up_shakeout.py, scripts/sequoia_x_repro/uptrend_limit_down.py, scripts/sequoia_x_repro/rps_breakout.py, scripts/sequoia_x_repro/select.py]
 supersedes: []
 ---
@@ -45,4 +45,4 @@ H20 phase mean 没有一条策略同时在 DEV_IS、DEV_OOS、2026YTD 保持正�
 
 # Provenance
 
-Slack `#tradar-research`：sequoia-x-repro-001 `1788696332.511649`；按日期 selector 的后续 thread `1788698577.506799`。
+研究结果摘要；相关实验文件标识见 artifacts。原始运行日志未随记录发布。

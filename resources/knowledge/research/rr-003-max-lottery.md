@@ -6,8 +6,8 @@ topic: MAX lottery-demand anomaly
 strategy: MAX20 score = -MAX20
 status: inconclusive
 tags: [MAX, lottery-demand, reversal, volatility, residual]
-source_type: slack
-source_ref: C0BTC7LU07L/1787913920.876949
+source_type: research_record
+source_ref: [data/factor_defs/max_score.yaml]
 artifacts: [data/factor_defs/max_score.yaml, scripts/stocks_active/max_lottery.py]
 supersedes: []
 ---
@@ -38,4 +38,4 @@ supersedes: []
 
 # Provenance
 
-Slack `#tradar-research`：max-lottery-001 线程 `1787913920.876949`。
+研究结果摘要；相关因子定义见 `data/factor_defs/max_score.yaml`，实验文件标识见 artifacts。原始运行日志未随记录发布。

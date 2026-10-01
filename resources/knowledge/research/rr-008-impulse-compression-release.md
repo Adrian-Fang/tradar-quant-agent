@@ -6,8 +6,8 @@ topic: Impulse to high-level compression to release
 strategy: Generalized impulse → compression → release event
 status: rejected
 tags: [pattern, compression, release, causal, event-study]
-source_type: slack
-source_ref: C0BTC7LU07L/1788744544.791929
+source_type: research_record
+source_ref: []
 artifacts: [scripts/structure/impulse_high_compression_release.py, data/structure_runs/impulse_high_compression_release/latest/metrics.csv, data/structure_runs/impulse_high_compression_release/latest/block_stability.csv, data/structure_runs/impulse_high_compression_release/latest/recent_signals.csv]
 supersedes: []
 ---
@@ -36,4 +36,4 @@ supersedes: []
 
 # Provenance
 
-Slack `#tradar-research`：structure-pattern-synthesis-001 线程 `1788744544.791929`。
+研究结果摘要；相关实验文件标识见 artifacts。原始运行日志未随记录发布。

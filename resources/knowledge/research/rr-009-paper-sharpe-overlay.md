@@ -6,8 +6,8 @@ topic: Paper-inspired liquidity, Sharpe weighting and drawdown overlay
 strategy: arXiv 2511.13251 PAPER_PROXY on canonical Top15
 status: rejected
 tags: [paper-reproduction, liquidity, weighting, drawdown, transaction-costs]
-source_type: slack
-source_ref: C0BTC7LU07L/1788841400.649219
+source_type: research_record
+source_ref: [arxiv:2511.13251]
 artifacts: [scripts/paper_sharpe_liquidity_overlay.py]
 supersedes: []
 ---
@@ -38,4 +38,4 @@ supersedes: []
 
 # Provenance
 
-Slack `#tradar-research`：paper-sharpe-liquidity-overlay-001 线程 `1788841400.649219`。
+相关文献：arXiv `2511.13251`；本记录是论文启发的 proxy 研究摘要，不是忠实复现。相关实验文件标识见 artifacts，原始运行日志未随记录发布。

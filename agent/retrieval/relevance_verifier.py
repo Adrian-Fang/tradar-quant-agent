@@ -11,6 +11,10 @@ from .semantic_retriever import retrieve_semantic
 
 
 PROMPT = load_prompt("prompts/relevance_verification.md")
+RECORD_EVIDENCE_FIELDS = (
+    "research_id", "path", "metadata", "title", "question", "tags", "text",
+    "source", "source_ref", "provenance", "source_hash", "schema_version",
+)
 
 
 def _response_text(response: Any) -> str:
@@ -48,7 +52,7 @@ def verify_record(
         "model": model,
         "instructions": PROMPT,
         "input": json.dumps(
-            {"query": query, "research_record": record},
+            {"query": query, "research_record": {key: record[key] for key in RECORD_EVIDENCE_FIELDS if key in record}},
             ensure_ascii=False,
         ),
     }
@@ -104,22 +108,25 @@ def retrieve_verified(
         embedder=embedder,
         prepared_corpus=prepared_corpus,
     )
+    return verify_candidates(query, candidates, client=client, model=model)
+
+
+def verify_candidates(query: str, candidates: list[dict[str, Any]], *, client: Any, model: str = "") -> dict[str, Any]:
+    """Verify full records from any retriever, retaining the accepted input order."""
     if not candidates:
         return {
             "status": "abstain",
             "results": [],
             "rejected": [],
             "errors": [],
-            "reason": "no semantic candidates",
+            "reason": "no retrieval candidates",
         }
 
     results = []
     rejected = []
     errors = []
     for candidate in candidates:
-        research_record = dict(candidate)
-        research_record.pop("score", None)
-        verification = verify_record(query, research_record, client=client, model=model)
+        verification = verify_record(query, candidate, client=client, model=model)
         if verification["status"] == "supported":
             result = dict(candidate)
             result["verification"] = {
@@ -164,4 +171,4 @@ def retrieve_verified(
     }
 
 
-__all__ = ["retrieve_verified", "verify_record"]
+__all__ = ["retrieve_verified", "verify_record", "verify_candidates"]

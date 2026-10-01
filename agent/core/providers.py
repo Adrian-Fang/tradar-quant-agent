@@ -20,6 +20,7 @@ class OllamaEmbeddingClient:
         base_url: str | None = None,
         model: str | None = None,
         timeout: float = 120.0,
+        truncate: bool | None = None,
     ) -> None:
         self.base_url = (base_url or os.getenv(
             "OLLAMA_BASE_URL", "http://localhost:11434"
@@ -28,11 +29,15 @@ class OllamaEmbeddingClient:
             "OLLAMA_EMBEDDING_MODEL", "qwen3-embedding:0.6b"
         )
         self.timeout = timeout
+        self.truncate = truncate
 
     def __call__(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        body = json.dumps({"model": self.model, "input": texts}).encode("utf-8")
+        payload = {"model": self.model, "input": texts}
+        if self.truncate is not None:
+            payload["truncate"] = self.truncate
+        body = json.dumps(payload).encode("utf-8")
         http_request = request.Request(
             f"{self.base_url}/api/embed",
             data=body,

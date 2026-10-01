@@ -6,8 +6,8 @@ topic: 52-week-high proximity
 strategy: HIGH52 and residual near-high penalty
 status: rejected
 tags: [52-week-high, momentum, residual, tail-penalty]
-source_type: slack
-source_ref: [C0BTC7LU07L/1787914634.094389, C0BTC7LU07L/1787932488.483929]
+source_type: research_record
+source_ref: [data/factor_defs/high52.yaml]
 artifacts: [data/factor_defs/high52.yaml, scripts/stocks_active/high52.py]
 supersedes: []
 ---
@@ -30,7 +30,7 @@ supersedes: []
 
 # Conclusion
 
-`rejected` 作为 standalone 正向动量因子：原假设方向相反，近高尾部存在可复现的 penalty 形状，但逐年 sign 不稳定，不足以称为已验证 alpha。Slack 结论只支持做一次固定口径的 avoid-leg 诊断，不支持直接生产化。
+`rejected` 作为 standalone 正向动量因子：原假设方向相反，近高尾部存在可复现的 penalty 形状，但逐年 sign 不稳定，不足以称为已验证 alpha。当前结论只支持做一次固定口径的 avoid-leg 诊断，不支持直接生产化。
 
 # Caveats
 
@@ -38,4 +38,4 @@ supersedes: []
 
 # Provenance
 
-Slack `#tradar-research`：high52-001 线程 `1787914634.094389`；high52-002 长历史扩展线程 `1787932488.483929`。
+研究结果摘要；相关因子定义见 `data/factor_defs/high52.yaml`，实验文件标识见 artifacts。原始运行日志未随记录发布。
