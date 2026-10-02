@@ -12,11 +12,11 @@ from typing import Any
 import pandas as pd
 
 from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient
-from ..core.resources import expand_tokens, load_json
+from ..core.resources import REPO_ROOT, expand_tokens, load_json
 from .calling import run_tool_calling
 
 
-EVAL_ARTIFACT_DIR = Path(__file__).resolve().parents[2] / "data" / "agent_eval"
+EVAL_ARTIFACT_DIR = REPO_ROOT / ".runtime" / "agent_eval"
 EVAL_ARTIFACTS = {
     "weights": EVAL_ARTIFACT_DIR / "weights.csv",
     "close": EVAL_ARTIFACT_DIR / "close.csv",

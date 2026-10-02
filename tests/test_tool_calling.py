@@ -7,9 +7,11 @@ from unittest.mock import patch
 
 from agent.core.contracts import ToolResult
 from agent.core.providers import DeepSeekChatClient, OpenAIResponsesClient
+from agent.core.resources import REPO_ROOT
 from agent.tools.eval import (
     CASES,
     EVAL_ARTIFACTS,
+    EVAL_ARTIFACT_DIR,
     _prepare_eval_artifacts,
     score_case,
 )
@@ -179,8 +181,13 @@ class ToolCallingTests(unittest.TestCase):
         self.assertTrue(row["execution_ok"])
 
     def test_fixture_artifacts_are_deterministic_and_readable(self):
+        self.assertEqual(EVAL_ARTIFACT_DIR, REPO_ROOT / ".runtime" / "agent_eval")
         paths = _prepare_eval_artifacts()
         self.assertEqual(paths, EVAL_ARTIFACTS)
+        for case in CASES:
+            if case["expected_tool"] == "run_backtest":
+                for argument, name in (("target_weights", "weights"), ("price_panel", "close"), ("open_panel", "open")):
+                    self.assertEqual(case["expected_args"][argument], str(paths[name]))
         contents = {path: path.read_bytes() for path in paths.values()}
         _prepare_eval_artifacts()
         for path in paths.values():

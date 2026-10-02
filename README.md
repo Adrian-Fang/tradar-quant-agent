@@ -73,6 +73,8 @@ Deterministic safety gate 同时覆盖常见英文攻击及中文直接指令：
 
 Authored Research Experiments 在隔离的只读数据/code sandbox 内执行：4 GiB 地址空间、80 秒 CPU / 90 秒 wall-time，单进程、64 个文件描述符及 64 KiB 输出限制。Worker 独立配置 DuckDB 为 1 thread / 256 MiB memory，spill 位于 `/work/cache/duckdb`（最多 256 MiB）；整个 `/work` 为 512 MiB 有界 tmpfs。共享/生产 DuckDB 默认值不变。仅 worker 通过 `TRADAR_EXPERIMENT_SANDBOX=1` 启用 bounded cold-window 复权读取：保留全历史事件累计口径，但不构建全历史 daily-factor cache；前复权按每个 symbol 窗口内最后交易日取单个 anchor，避免对宽价格结果执行全表 window。sandbox 外仍保留共享 cache rebuild / force-refresh 语义。Authoring 必须只加载需要的字段/掩码并及时释放宽表中间结果，逐个 horizon 计算/汇总/释放，不能缩短研究窗口或吞掉资源错误。超限保留结构化执行错误；这些限制不保证任意规模研究都能完成。
 
+可检查的本地 runtime artifacts 统一放在 gitignored `.runtime/`：生成的实验源码保留于 `.runtime/experiments/<source_sha256>.py`（`TRADAR_EXPERIMENT_ARTIFACT_DIR` 显式覆盖仍有效），知识索引状态保留于 `.runtime/knowledge_index/`。`python -m agent.tools.eval --provider fixture --repeats 1` 生成的 weights/close/open CSV 位于 `.runtime/agent_eval/`，可作为人工 UAT 的 runtime artifact 参数；不要引用临时 `/tmp` fixture。需要保存 CLI/UAT 输出时，使用 `.runtime/runs/` 下的报告文件（CLI 仍输出到 stdout，不新增自动持久化）。实验 worker 的临时 isolation 工作目录和测试临时文件仍用完清理；canonical market data 的 `DATA_PATH` 与已有 provenance/显式 artifact 路径不变。
+
 ## 架构快照 / Architecture Snapshot
 
 ```text
