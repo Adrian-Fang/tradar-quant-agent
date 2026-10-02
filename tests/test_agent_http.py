@@ -6,6 +6,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
 
+from agent.agent import run_agent
+from agent.core.contracts import ToolResult
 from agent.http import app, _request_lock
 from agent.retrieval.loader import load_research_records
 
@@ -238,6 +240,39 @@ class AgentHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["status"], "error")
         self.assertEqual(body["error_type"], "provider_error")
         self.assertEqual(body["error_stage"], "planning")
+
+    async def test_propagated_execution_error_reaches_existing_compact_response(self):
+        step = {"name": "inspect_universe", "arguments": {
+            "start_date": "2026-08-31", "end_date": "2026-08-31",
+        }}
+        planner = Mock(provider="fixture")
+        planner.create.return_value = {"output_text": json.dumps({
+            "status": "ready", "steps": [step], "reason": "inspect",
+        })}
+        hitl = Mock(provider="fixture")
+        hitl.create.return_value = {"output_text": json.dumps({
+            "decision": "proceed", "approval_request": None, "reason": "safe",
+        })}
+        failed = ToolResult.error("inspect_universe", step["arguments"], "data_unavailable",
+                                  "Canonical prices are unavailable.", run_id="http-failed-run")
+        with patch("agent.tools.executor.TOOL_FUNCTIONS", {"inspect_universe": Mock(return_value=failed)}):
+            result = run_agent("Inspect the universe.", planner_client=planner, hitl_client=hitl,
+                               run_id=failed.run_id)
+        with patch("agent.http.run_request", return_value=result), patch(
+            "agent.http.asyncio.to_thread", new=self.call_in_test
+        ):
+            response = await self.request("POST", "/v1/research", json={"message": "Inspect the universe."})
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "error")
+        self.assertEqual(body["outcome"], "error")
+        self.assertEqual(body["error_type"], failed.errors[0]["code"])
+        self.assertEqual(body["error"], failed.errors[0]["message"])
+        self.assertEqual(body["error_stage"], "execution")
+        self.assertEqual(body["run_id"], failed.run_id)
+        self.assertEqual(body["steps"][0]["status"], "error")
+        self.assertEqual(body["telemetry"]["failure_stage"], "execution")
+        self.assertIsNone(body["answer"])
 
     async def test_busy_request_fails_fast(self):
         self.assertTrue(_request_lock.acquire(blocking=False))

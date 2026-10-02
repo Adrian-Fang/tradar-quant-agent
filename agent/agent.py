@@ -920,6 +920,11 @@ def run_agent(
 
     steps = _steps(run)
     if run.status == "failed":
+        failed_step = next((step for step in reversed(run.steps) if step["status"] == "error"), {})
+        failure = (failed_step.get("errors") or [{
+            "code": "research_run_failed",
+            "message": "ResearchRun failed without a structured tool error.",
+        }])[0]
         return _finish(
             context_ids=[item["id"] for item in selected],
             planning=planning,
@@ -931,6 +936,9 @@ def run_agent(
             outcome="error",
             plan=plan,
             retrieval_result=retrieval_result,
+            status="error",
+            error_type=failure["code"],
+            error=failure["message"],
             error_stage="execution",
             safety=safety,
             telemetry=telemetry,

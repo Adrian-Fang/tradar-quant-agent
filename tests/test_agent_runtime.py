@@ -98,6 +98,9 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         observed = result["observed"]
         self.assertEqual(result["status"], "ok")
+        self.assertIsNone(result["error_type"])
+        self.assertIsNone(result["error_stage"])
+        self.assertEqual(result["error"], "")
         self.assertEqual(result["research_run"].status, "completed")
         self.assertEqual(observed["outcome"], {"status": "success"})
         self.assertEqual(observed["context"], {"selected_ids": ["request_scope"]})
@@ -237,15 +240,44 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIsNone(row["trajectory"])
         self.assertEqual(calls, [])
 
-    def test_tool_error_is_execution_failure_inside_research_run(self):
+    def test_failed_run_without_structured_error_has_deterministic_fallback(self):
         result, _, _, _, calls = self.run_with_tool(tool_status="error")
 
-        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["error_type"], "research_run_failed")
+        self.assertEqual(result["error_stage"], "execution")
+        self.assertEqual(result["error"], "ResearchRun failed without a structured tool error.")
         self.assertEqual(result["research_run"].status, "failed")
         self.assertEqual(result["research_run"].final_status, "error")
+        self.assertEqual(result["research_run"].steps[0]["errors"], [])
         self.assertEqual(result["observed"]["steps"][0]["status"], "error")
         self.assertEqual(result["observed"]["outcome"]["status"], "error")
+        self.assertEqual(result["telemetry"]["summary"]["failure_stage"], "execution")
         self.assertEqual(len(calls), 1)
+
+    def test_failed_tool_error_is_propagated_without_mutating_canonical_state(self):
+        planner, hitl, _ = self.clients()
+        failed = ToolResult.error("inspect_universe", research_step()["arguments"],
+                                  "data_unavailable", "Canonical prices are unavailable.", run_id="error-test")
+        failed.errors.append({"code": "secondary_error", "message": "Do not use this error."})
+        before = copy.deepcopy(failed.to_dict())
+        with patch("agent.tools.executor.TOOL_FUNCTIONS", {"inspect_universe": Mock(return_value=failed)}):
+            result = run_agent("Inspect the universe.", planner_client=planner, hitl_client=hitl,
+                               run_id=failed.run_id)
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["observed"]["outcome"], {"status": "error"})
+        self.assertEqual(result["error_stage"], "execution")
+        self.assertEqual(result["error_type"], failed.errors[0]["code"])
+        self.assertEqual(result["error"], failed.errors[0]["message"])
+        self.assertEqual(result["research_run"].steps[0]["errors"], before["errors"])
+        self.assertEqual(failed.to_dict(), before)
+        self.assertEqual(result["research_run"].status, "failed")
+        self.assertEqual(result["research_run"].final_status, "error")
+        self.assertIsNone(result["answer"])
+        self.assertIsNone(result["grounding"])
+        self.assertEqual(len(planner.calls), 1)
+        self.assertEqual(len(hitl.calls), 1)
+        self.assertEqual(result["telemetry"]["summary"]["failure_stage"], "execution")
 
     def test_grounding_failure_blocks_final_outcome_without_rewriting(self):
         result, _, _, ground, _ = self.run_with_tool(

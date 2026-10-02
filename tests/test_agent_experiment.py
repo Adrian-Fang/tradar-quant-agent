@@ -16,6 +16,7 @@ import duckdb
 
 import agent.tools.experiment as experiment_module
 from agent.agent import run_agent
+from agent.core.contracts import ToolResult
 from agent.tools.calling import TOOL_SCHEMAS
 from agent.tools.experiment import (
     CAPABILITY_MANIFEST,
@@ -716,6 +717,37 @@ class ExperimentArchitectureTests(unittest.TestCase):
         self.assertEqual(
             result["research_run"].steps[0]["provenance"]["repair_attempts"], 1
         )
+
+    def test_exhausted_runtime_repair_propagates_the_final_execution_error(self):
+        planner = Client({
+            "status": "ready",
+            "steps": [{"name": "run_research_experiment", "arguments": {"spec": spec()}}],
+            "reason": "custom analysis",
+        })
+        authoring = Client({"program": PROGRAM})
+        errors = [
+            ToolResult.error("run_research_experiment", {"spec": spec()}, "experiment_runtime_error",
+                             message, run_id="failed-experiment")
+            for message in ("Initial runtime failure.", "DuckDB OutOfMemoryException: failed to allocate memory.")
+        ]
+        with patch("agent.agent.run_research_experiment", side_effect=errors) as execute:
+            result = run_agent(
+                "研究大盘下跌事件。", planner_client=planner, experiment_authoring_client=authoring,
+                hitl_client=Client({"decision": "proceed", "approval_request": None, "reason": "safe"}),
+                run_id="failed-experiment",
+            )
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["observed"]["outcome"], {"status": "error"})
+        self.assertEqual(result["error_stage"], "execution")
+        self.assertEqual(result["error_type"], "experiment_runtime_error")
+        self.assertEqual(result["error"], errors[-1].errors[0]["message"])
+        self.assertEqual(result["research_run"].steps[0]["errors"], errors[-1].errors)
+        self.assertEqual(result["research_run"].status, "failed")
+        self.assertEqual(result["research_run"].steps[0]["provenance"]["repair_attempts"], 1)
+        self.assertEqual(len(planner.calls), 1)
+        self.assertEqual(len(authoring.calls), 2)
+        self.assertEqual(execute.call_count, 2)
+        self.assertIsNone(result["answer"])
 
     def test_policy_violation_is_terminal_without_repair(self):
         planner = Client({
