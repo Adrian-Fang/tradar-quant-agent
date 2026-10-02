@@ -4,7 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import duckdb
 import pandas as pd
@@ -110,6 +110,67 @@ class LimitMoveMaskTests(unittest.TestCase):
                 result = loader.load_prices("2026-01-05", "2026-01-05", adjust="backward", fields=["close"])
             self.assertEqual(result.shape, (1, 1))
             self.assertEqual(result.iloc[0, 0], 40)
+
+    def test_forward_cold_anchors_preserve_last_available_trade_and_null_event_semantics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "prices.duckdb")
+            con = duckdb.connect(database)
+            con.execute("""CREATE TABLE history AS
+                SELECT symbol,date,close,close+1 AS open,close+2 AS high,close-1 AS low,
+                       100.0 AS volume,1000.0 AS amount FROM (VALUES
+                    ('600000',DATE '2026-01-09',10.0),('600000',DATE '2026-01-12',11.0),
+                    ('600001',DATE '2026-01-09',20.0),
+                    ('600002',DATE '2026-01-09',30.0),('600002',DATE '2026-01-12',31.0),
+                    ('600003',DATE '2026-01-09',40.0),('600003',DATE '2026-01-12',41.0)
+                ) prices(symbol,date,close)""")
+            con.execute("CREATE TABLE ex_factors(symbol VARCHAR,date DATE,ex_factor DOUBLE)")
+            con.execute("""INSERT INTO ex_factors VALUES
+                ('600000','2000-01-01',2),('600000','2026-01-10',1.5),
+                ('600000','2027-01-01',3),
+                ('600001','2000-01-01',2),('600001','2026-01-10',3),
+                ('600003','2000-01-01',2),('600003','2026-01-10',NULL)
+            """)
+            raw = con.execute("SELECT * FROM history ORDER BY date,symbol").df()
+            raw["date"] = pd.to_datetime(raw["date"])
+            con.close()
+            with patch.object(loader, "get_conn", side_effect=lambda: duckdb.connect(database)), patch.object(
+                loader, "_cache_is_fresh", return_value=False
+            ), patch.object(loader, "CACHE_PATH", Path(directory) / "missing.parquet"), patch.dict(
+                os.environ, {"TRADAR_EXPERIMENT_SANDBOX": "1"}
+            ):
+                factors = loader._compute_full_cum_factor()
+                expected = loader._apply_price_adjustment(raw, factors, "forward")
+                for fields in (["close"], ["open", "high", "low", "close", "volume", "amount"]):
+                    with self.subTest(fields=fields):
+                        actual = loader.load_prices("2026-01-09", "2026-01-12", fields=fields)
+                        pd.testing.assert_frame_equal(actual, expected.set_index(["date", "symbol"])[fields].sort_index())
+                self.assertFalse(loader.CACHE_PATH.exists())
+
+    def test_forward_cold_wide_query_has_no_per_price_row_window(self):
+        with tempfile.TemporaryDirectory() as directory:
+            con = duckdb.connect(config={"threads": 1, "memory_limit": "32MiB",
+                                        "temp_directory": directory, "max_temp_directory_size": "32MiB"})
+            try:
+                con.execute("""CREATE TABLE history AS
+                    SELECT lpad(s::VARCHAR,6,'0') symbol, DATE '2021-01-01'+d::INTEGER date,
+                           (10+d*0.01)::DOUBLE AS close,11.0::DOUBLE AS open,
+                           12.0::DOUBLE AS high,9.0::DOUBLE AS low,1000.0::DOUBLE AS volume
+                    FROM range(100) stocks(s),range(1000) days(d)""")
+                con.execute("""CREATE TABLE ex_factors AS SELECT DISTINCT symbol,
+                    DATE '2000-01-01' date,1.2::DOUBLE ex_factor FROM history""")
+                con.execute("INSERT INTO ex_factors SELECT DISTINCT symbol,DATE '2022-01-01',0.5 FROM history")
+                connection = Mock(wraps=con)
+                result = loader._query_adjusted_prices(connection,
+                    "SELECT symbol,date,open,high,low,close,volume FROM history WHERE date>=? AND date<=?",
+                    ["2021-01-01", "2023-12-31"], ["open", "high", "low", "close", "volume"], "forward", None)
+                query, params = connection.execute.call_args.args
+                plan = con.execute("EXPLAIN " + query, params).fetchone()[1]
+                self.assertNotIn("WINDOW", plan.upper())
+                self.assertEqual(len(result), 100000)
+                self.assertAlmostEqual(float(result.loc[result.date.eq(pd.Timestamp("2021-01-01")), "close"].iloc[0]), 20.0)
+                self.assertAlmostEqual(float(result.loc[result.date.eq(result.date.max()), "close"].iloc[0]), 19.99)
+            finally:
+                con.close()
 
     def test_price_panel_loads_only_requested_field(self) -> None:
         index = pd.MultiIndex.from_tuples(

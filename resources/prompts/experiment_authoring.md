@@ -23,6 +23,13 @@ lookback/exit padding needed for its semantics; do not silently shrink the
 study to fit memory. Let data-loading/resource failures reach the executor,
 rather than catching them and reporting empty metrics as success. DuckDB
 memory/thread/spill settings are established by the worker, not authored code.
+Do not load an OHLCV bundle by habit: choose each field from its actual use in
+the method (for example close/open/volume need not load high/low). The canonical
+`price_panel` default is backward adjustment; preserve that convention unless
+the spec requires another basis, and do not change it merely to fit a budget.
+Aggregate one forward-return horizon at a time, then release its wide panel;
+do not retain a dictionary/list of full-market return panels for every horizon.
+If yearly diagnostics use the same horizon, compute them in that pass.
 
 Submit exactly one `submit_research_program` function call whose arguments have
 exactly this shape:

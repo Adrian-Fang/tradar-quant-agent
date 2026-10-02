@@ -223,9 +223,19 @@ def _configure_duckdb(settings: dict[str, Any]) -> None:
     original_connect = duckdb.connect
 
     def connect(database=":memory:", read_only=False, config=None):
-        return original_connect(
+        connection = original_connect(
             database, read_only=read_only, config={**(config or {}), **settings}
         )
+        try:
+            # DuckDB 1.5.4 reports the constructor value but its spill manager
+            # still uses the default disk ceiling unless this setting is applied.
+            connection.execute(
+                "SET max_temp_directory_size = ?", [settings["max_temp_directory_size"]]
+            )
+        except BaseException:
+            connection.close()
+            raise
+        return connection
 
     duckdb.connect = connect
 

@@ -204,6 +204,9 @@ class ExperimentArchitectureTests(unittest.TestCase):
             call = native_connect.call_args
             self.assertTrue(call.kwargs["read_only"])
             self.assertEqual(call.kwargs["config"], settings)
+            native_connect.return_value.execute.assert_called_once_with(
+                "SET max_temp_directory_size = ?", [settings["max_temp_directory_size"]]
+            )
             duckdb.connect(config={"threads": 8, "memory_limit": "8GB"})
             self.assertEqual(native_connect.call_args.kwargs["config"], settings)
         self.assertIs(duckdb.connect, original_connect)
@@ -211,6 +214,15 @@ class ExperimentArchitectureTests(unittest.TestCase):
         with patch.object(duckdb, "connect") as shared_connect:
             duckdb_manager.get_conn()
         shared_connect.assert_called_once_with(duckdb_manager.DB_PATH, read_only=True)
+
+    def test_duckdb_connection_is_closed_if_spill_configuration_fails(self):
+        settings = experiment_module._isolation_config(Path("/tmp/root"), Path("/tmp/data"))["duckdb"]
+        with patch.object(duckdb, "connect") as native_connect:
+            native_connect.return_value.execute.side_effect = RuntimeError("configuration failed")
+            experiment_worker._configure_duckdb(settings)
+            with self.assertRaisesRegex(RuntimeError, "configuration failed"):
+                duckdb.connect()
+            native_connect.return_value.close.assert_called_once_with()
 
     def test_duckdb_oom_is_a_controlled_resource_error(self):
         error = duckdb.OutOfMemoryException("fixture allocation failed")
@@ -301,7 +313,7 @@ class ExperimentArchitectureTests(unittest.TestCase):
         self.assertEqual(authored["status"], "ok")
         self.assertEqual(payload["experiment_spec"], spec())
         self.assertEqual(payload["capability_manifest"], CAPABILITY_MANIFEST)
-        self.assertEqual(payload["capability_manifest"]["version"], "1.5.1")
+        self.assertEqual(payload["capability_manifest"]["version"], "1.5.2")
         self.assertEqual(payload["execution_budget"]["process_memory_bytes"], experiment_module.MEMORY_BYTES)
         self.assertEqual(payload["execution_budget"]["duckdb_threads"], 1)
         self.assertLess(payload["execution_budget"]["duckdb_memory_bytes"], payload["execution_budget"]["process_memory_bytes"])
@@ -320,6 +332,15 @@ class ExperimentArchitectureTests(unittest.TestCase):
         )
         self.assertEqual(client.calls[0]["tools"], [AUTHORING_TOOL_SCHEMA])
         self.assertEqual(client.calls[0]["tool_choice"], "required")
+
+    def test_authoring_guidance_bounds_field_and_horizon_lifetimes_without_changing_method(self):
+        payload = experiment_module.build_authoring_payload("request", spec())
+        constraints = json.loads(payload["input"])["capability_manifest"]["authoring_constraints"]
+        self.assertIn("unused high/low", constraints["data_loading"])
+        self.assertIn("never change adjustment", constraints["data_loading"])
+        self.assertIn("one forward-return horizon at a time", constraints["panel_lifetime"])
+        self.assertIn("yearly diagnostics", constraints["panel_lifetime"])
+        self.assertIn("do not retain a dictionary/list", payload["instructions"])
 
     def test_authoring_accepts_normalized_tool_call_with_empty_text(self):
         class ToolCallClient(Client):
@@ -450,6 +471,16 @@ class ExperimentArchitectureTests(unittest.TestCase):
     def test_sandbox_exposes_canonical_loader_but_not_other_data_files(self):
         source = (
             "import pandas as pd\n"
+            "import duckdb\n"
+            "settings = []\n"
+            "worker_connect = duckdb.connect\n"
+            "def capture_connect(*args, **kwargs):\n"
+            "    c = worker_connect(*args, **kwargs)\n"
+            "    c.register('resource_probe', pd.DataFrame({'value': [1]}))\n"
+            "    settings.append(dict(c.execute(\"SELECT name,value FROM duckdb_settings() WHERE name IN "
+            "('threads','memory_limit','temp_directory','max_temp_directory_size')\").fetchall()))\n"
+            "    return c\n"
+            "duckdb.connect = capture_connect\n"
             "from utils.loader import load_index, load_prices\n\n"
             "def run():\n"
             "    try:\n"
@@ -460,11 +491,12 @@ class ExperimentArchitectureTests(unittest.TestCase):
             "    index = load_index('000300', '2025-01-02', '2025-01-02')\n"
             "    prices = load_prices('2025-01-02', '2025-01-02', "
             "adjust='backward', symbols=['000001'], fields=['close'])\n"
+            "    load_prices('2025-01-02', '2025-01-02', adjust='forward', fields=['close'])\n"
             "    return {'assumptions': [], 'method': {'type': 'read_surface'}, "
             "'data_coverage': {'actual_start': None, 'actual_end': None}, "
             "'metrics': {'secret_file_visible': secret_file_visible, "
             "'index_close': float(index.iloc[0]), "
-            "'stock_close': float(prices.iloc[0]['close'])}, "
+            "'stock_close': float(prices.iloc[0]['close']), 'connection_settings': settings}, "
             "'sample_counts': {'prices': len(prices)}, 'warnings': []}\n"
         )
         with tempfile.TemporaryDirectory() as directory:
@@ -502,7 +534,12 @@ class ExperimentArchitectureTests(unittest.TestCase):
             self.assertFalse((data_path / "cache").exists())
 
         self.assertEqual(result["status"], "success", result)
-        self.assertEqual(result["result"]["metrics"], {
+        metrics = result["result"]["metrics"]
+        self.assertEqual(metrics.pop("connection_settings"), [{
+            "threads": "1", "memory_limit": "256.0 MiB",
+            "temp_directory": "/work/cache/duckdb", "max_temp_directory_size": "256.0 MiB",
+        }] * 3)
+        self.assertEqual(metrics, {
             "secret_file_visible": False,
             "index_close": 3000.0,
             "stock_close": 10.0,
@@ -993,6 +1030,26 @@ class ExperimentSandboxTests(unittest.TestCase):
         self.assertEqual(metrics["sorted_rows"], 300000)
         self.assertTrue(metrics["spill_files"])
         self.assertEqual(metrics["workspace_bytes"], experiment_module.WORKSPACE_BYTES)
+
+    def test_canonical_connection_enforces_spill_limit_not_just_reports_it(self):
+        source = (
+            "from utils.duckdb_manager import get_conn\n"
+            "def run():\n"
+            "    c = get_conn()\n"
+            "    c.execute(\"SET memory_limit='32MiB'\")\n"
+            "    c.execute(\"SELECT count(*) FROM (SELECT i, md5(i::VARCHAR) s "
+            "FROM range(2000000) t(i) ORDER BY s)\").fetchone()\n"
+            "    return {}\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            duckdb.connect(str(Path(directory) / "tradar.duckdb")).close()
+            # A lower test-only bound makes enforcement deterministic and cheap.
+            with patch.object(experiment_module, "DUCKDB_SPILL_BYTES", 8 * 1024**2):
+                result = _execute_isolated_source(source, data_path=directory)
+        self.assertEqual(result["status"], "error", result)
+        self.assertEqual(result["error_type"], "experiment_resource_limit", result)
+        self.assertIn("failed to offload data block", result["message"])
+        self.assertIn("/8.0 MiB used", result["message"])
 
     def test_workspace_capacity_is_enforced(self):
         result = self.execute(

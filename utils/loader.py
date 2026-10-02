@@ -160,6 +160,8 @@ def _query_adjusted_prices(con, query, params, selected, adjust, symbols):
     Keep pandas' canonical cumprod (including null-event handling); only the
     small event table crosses into pandas. ASOF uses all prior events, even
     when the event occurred before the requested window or on a non-trading day.
+    Forward normalization uses one anchor per symbol's last available window
+    date, avoiding a blocking window over the entire wide price result.
     """
     where = "" if symbols is None else f" WHERE symbol IN ({','.join('?' for _ in symbols)})"
     events = con.execute(
@@ -169,8 +171,18 @@ def _query_adjusted_prices(con, query, params, selected, adjust, symbols):
     events["cum_factor"] = events.groupby("symbol")["ex_factor"].cumprod()
     con.register("_adjustment_events", events[["symbol", "date", "cum_factor"]])
     factor = "cum_factor"
+    anchor_join = ""
     if adjust == "forward":
-        factor += " / last_value(cum_factor) OVER (PARTITION BY symbol ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)"
+        anchors = con.execute(f"""
+            SELECT p.symbol, coalesce(e.cum_factor, 1.0) AS anchor_factor
+            FROM (
+                SELECT symbol, max(date) AS date FROM ({query}) prices GROUP BY symbol
+            ) p ASOF LEFT JOIN _adjustment_events e
+            ON p.symbol = e.symbol AND p.date >= e.date
+        """, params).df()
+        con.register("_adjustment_anchors", anchors)
+        factor += " / anchor_factor"
+        anchor_join = "LEFT JOIN _adjustment_anchors USING (symbol)"
     fields = ", ".join(
         f"{field} * ({factor}) AS {field}"
         if field in {"open", "high", "low", "close"} else field
@@ -182,7 +194,7 @@ def _query_adjusted_prices(con, query, params, selected, adjust, symbols):
             FROM ({query}) p ASOF LEFT JOIN _adjustment_events e
             ON p.symbol = e.symbol AND p.date >= e.date
         )
-        SELECT symbol, date, {fields} FROM adjusted
+        SELECT symbol, date, {fields} FROM adjusted {anchor_join}
     """, params).df()
 
 
