@@ -25,7 +25,7 @@ from ..core.providers import provider_error_type
 
 MAX_PROGRAM_CHARS = 50_000
 WALL_TIMEOUT_SECONDS = 90
-CPU_SECONDS = 60
+CPU_SECONDS = 80
 # The real all-market cold close load peaks at ~2.54 GiB virtual / 1.10 GiB RSS.
 MEMORY_BYTES = 4 * 1024**3
 MAX_PROCESSES = 1

@@ -159,6 +159,20 @@ class ExperimentArchitectureTests(unittest.TestCase):
         self.assertTrue(expected.issubset(config["python_path"]))
         self.assertEqual(config["environment"]["TRADAR_EXPERIMENT_SANDBOX"], "1")
 
+    def test_cpu_wall_budgets_are_consistent_in_authoring_and_worker(self):
+        payload = experiment_module.build_authoring_payload("request", spec())
+        budget = json.loads(payload["input"])["execution_budget"]
+        config = experiment_module._isolation_config(Path("/tmp/root"), Path("/tmp/data"))
+        self.assertEqual(budget["cpu_seconds"], 80)
+        self.assertEqual(budget["wall_seconds"], 90)
+        self.assertEqual(experiment_module.CPU_SECONDS, budget["cpu_seconds"])
+        self.assertEqual(experiment_module.WALL_TIMEOUT_SECONDS, budget["wall_seconds"])
+        self.assertLess(budget["cpu_seconds"], budget["wall_seconds"])
+        self.assertEqual(config["limits"]["cpu_seconds"], budget["cpu_seconds"])
+        with patch.object(experiment_worker.resource, "setrlimit") as setrlimit:
+            experiment_worker._apply_limits(config["limits"])
+        setrlimit.assert_any_call(experiment_worker.resource.RLIMIT_CPU, (80, 80))
+
     def test_cpu_limit_classification_handles_unshare_exit_status(self):
         self.assertTrue(experiment_module._resource_limit_termination(1, 1.0, 1))
         self.assertFalse(experiment_module._resource_limit_termination(1, 0.1, 1))
@@ -166,6 +180,14 @@ class ExperimentArchitectureTests(unittest.TestCase):
             experiment_module._resource_limit_termination(-signal.SIGSEGV, 1.0, 1)
         )
         self.assertFalse(experiment_module._resource_limit_termination(2, 0.1, 1))
+        self.assertFalse(experiment_module._resource_limit_termination(1, 60, experiment_module.CPU_SECONDS))
+        self.assertTrue(experiment_module._resource_limit_termination(1, 80, experiment_module.CPU_SECONDS))
+        for sig in (signal.SIGKILL, signal.SIGXCPU, signal.SIGXFSZ):
+            for return_code in (-int(sig), 128 + int(sig)):
+                with self.subTest(return_code=return_code):
+                    self.assertTrue(experiment_module._resource_limit_termination(
+                        return_code, 0, experiment_module.CPU_SECONDS,
+                    ))
 
     def test_duckdb_settings_are_worker_only_and_cannot_be_overridden_at_connect(self):
         config = experiment_module._isolation_config(Path("/tmp/root"), Path("/tmp/data"))
