@@ -154,6 +154,38 @@ def _apply_price_adjustment(
     return df.drop(columns=["cum_factor"])
 
 
+def _query_adjusted_prices(con, query, params, selected, adjust, symbols):
+    """Cold-window adjustment without a full-history/per-trading-day factor frame.
+
+    Keep pandas' canonical cumprod (including null-event handling); only the
+    small event table crosses into pandas. ASOF uses all prior events, even
+    when the event occurred before the requested window or on a non-trading day.
+    """
+    where = "" if symbols is None else f" WHERE symbol IN ({','.join('?' for _ in symbols)})"
+    events = con.execute(
+        f"SELECT symbol, date, ex_factor FROM ex_factors{where} ORDER BY symbol, date",
+        [] if symbols is None else symbols,
+    ).df()
+    events["cum_factor"] = events.groupby("symbol")["ex_factor"].cumprod()
+    con.register("_adjustment_events", events[["symbol", "date", "cum_factor"]])
+    factor = "cum_factor"
+    if adjust == "forward":
+        factor += " / last_value(cum_factor) OVER (PARTITION BY symbol ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)"
+    fields = ", ".join(
+        f"{field} * ({factor}) AS {field}"
+        if field in {"open", "high", "low", "close"} else field
+        for field in selected
+    )
+    return con.execute(f"""
+        WITH adjusted AS (
+            SELECT p.*, coalesce(e.cum_factor, 1.0) AS cum_factor
+            FROM ({query}) p ASOF LEFT JOIN _adjustment_events e
+            ON p.symbol = e.symbol AND p.date >= e.date
+        )
+        SELECT symbol, date, {fields} FROM adjusted
+    """, params).df()
+
+
 def load_prices(
     start: str,
     end: str,
@@ -194,22 +226,29 @@ def load_prices(
         symbol_filter = f" AND symbol IN ({','.join('?' for _ in normalized)})"
         params.extend(normalized)
 
+    adjusted_fields = set(selected) & {"open", "high", "low", "close"}
+    cold_adjustment = bool(adjust != "none" and adjusted_fields and (
+        force_refresh_cache or not _cache_is_fresh()
+    ))
     con = get_conn()
     try:
-        raw = con.execute(f"""
+        query = f"""
             SELECT symbol, date, {', '.join(selected)}
             FROM history
             WHERE date >= ? AND date <= ?{symbol_filter}
-            ORDER BY date, symbol
-        """, params).df()
+        """
+        raw = (
+            _query_adjusted_prices(con, query, params, selected, adjust,
+                                   normalized if symbols is not None else None)
+            if cold_adjustment else con.execute(query + " ORDER BY date, symbol", params).df()
+        )
     finally:
         con.close()
 
     raw["symbol"] = raw["symbol"].astype(str).str.zfill(6)
     raw["date"] = pd.to_datetime(raw["date"])
 
-    adjusted_fields = set(selected) & {"open", "high", "low", "close"}
-    if adjust == "none" or not adjusted_fields:
+    if adjust == "none" or not adjusted_fields or cold_adjustment:
         df = raw
     else:
         cum_factor_all = _load_full_cum_factor(

@@ -15,6 +15,7 @@ from unittest.mock import patch
 import duckdb
 
 import agent.tools.experiment as experiment_module
+from agent.tools import experiment_worker
 from agent.agent import run_agent
 from agent.core.contracts import ToolResult
 from agent.tools.calling import TOOL_SCHEMAS
@@ -162,6 +163,98 @@ class ExperimentArchitectureTests(unittest.TestCase):
         )
         self.assertFalse(experiment_module._resource_limit_termination(2, 0.1, 1))
 
+    def test_duckdb_settings_are_worker_only_and_cannot_be_overridden_at_connect(self):
+        config = experiment_module._isolation_config(Path("/tmp/root"), Path("/tmp/data"))
+        settings = config["duckdb"]
+        self.assertEqual(settings["threads"], 1)
+        self.assertEqual(settings["temp_directory"], "/work/cache/duckdb")
+        self.assertLess(experiment_module.DUCKDB_MEMORY_BYTES, config["limits"]["memory_bytes"])
+        self.assertLess(experiment_module.DUCKDB_SPILL_BYTES, config["limits"]["workspace_bytes"])
+        from utils import duckdb_manager
+        original_connect = duckdb.connect
+        with patch.object(duckdb, "connect") as native_connect:
+            experiment_worker._configure_duckdb(settings)
+            duckdb_manager.get_conn()
+            call = native_connect.call_args
+            self.assertTrue(call.kwargs["read_only"])
+            self.assertEqual(call.kwargs["config"], settings)
+            duckdb.connect(config={"threads": 8, "memory_limit": "8GB"})
+            self.assertEqual(native_connect.call_args.kwargs["config"], settings)
+        self.assertIs(duckdb.connect, original_connect)
+        # Shared production connections still pass no experiment config at all.
+        with patch.object(duckdb, "connect") as shared_connect:
+            duckdb_manager.get_conn()
+        shared_connect.assert_called_once_with(duckdb_manager.DB_PATH, read_only=True)
+
+    def test_duckdb_oom_is_a_controlled_resource_error(self):
+        error = duckdb.OutOfMemoryException("fixture allocation failed")
+        self.assertEqual(experiment_worker._error_type(error), "experiment_resource_limit")
+
+    def test_resource_failure_remains_a_structured_tool_error(self):
+        authored = author_experiment("request", spec(), client=Client({"program": PROGRAM}))
+        with patch.object(experiment_module, "_execute_isolated_source", return_value={
+            "status": "error", "error_type": "experiment_resource_limit",
+            "message": "OutOfMemoryException: bounded DuckDB allocation failed",
+        }):
+            result = run_research_experiment(spec(), authored_program=authored["program"],
+                                            authoring_provenance=authored["provenance"])
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.errors, [{"code": "experiment_resource_limit", "message": "OutOfMemoryException: bounded DuckDB allocation failed"}])
+        self.assertEqual(result.provenance["validation_status"]["execution"], "failed")
+
+    @_requires_sandbox
+    def test_local_momentum_and_low_vol_breakout_contract_paths(self):
+        prefix = (
+            "import numpy as np\nimport pandas as pd\n"
+            "from research.panel import price_panel, eligible_universe_mask, buyable_mask\n"
+            "def run():\n"
+            "    close = price_panel('2021-01-01', '2021-12-31', field='close')\n"
+            "    eligible = eligible_universe_mask('2021-01-01', '2021-12-31')\n"
+        )
+        programs = {
+            "momentum": prefix +
+                "    values = (close / close.shift(20) - 1).where(eligible)\n",
+            "low_vol_breakout": prefix +
+                "    volume = price_panel('2021-01-01', '2021-12-31', field='volume')\n"
+                "    low = close.pct_change().rolling(60).std().rank(axis=1, pct=True).le(1/3)\n"
+                "    breakout = (close > close.rolling(20).max().shift(1)) & (volume > volume.rolling(20).mean() * 1.5)\n"
+                "    buy = buyable_mask('2021-01-01', '2021-12-31')\n"
+                "    values = (close.shift(-20) / close - 1).where(eligible & low & breakout & buy)\n",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            db = duckdb.connect(str(Path(directory) / "tradar.duckdb"))
+            db.execute("""CREATE TABLE history AS
+                SELECT lpad(s::VARCHAR,6,'0') symbol, DATE '2021-01-01'+d::INTEGER date,
+                       (10 + d * 0.2 + s * 0.01)::DOUBLE AS close,
+                       (CASE WHEN d%25=0 THEN 400 ELSE 100 END)::DOUBLE volume
+                FROM range(120) stocks(s), range(200) days(d)""")
+            db.execute("CREATE TABLE ex_factors(symbol VARCHAR, date DATE, ex_factor DOUBLE)")
+            db.execute("INSERT INTO ex_factors SELECT DISTINCT symbol,DATE '2000-01-01',1.2 FROM history")
+            db.execute("""CREATE TABLE hist_ext AS SELECT symbol,date,false is_st,
+                true is_trading,2.0 turnover_rate,0.0 change_pct FROM history""")
+            db.execute("CREATE TABLE universe AS SELECT DISTINCT symbol, DATE '2000-01-01' list_date,'SH' exchange FROM history")
+            db.close()
+            with patch.dict(os.environ, {"DATA_PATH": directory}):
+                for name, source in programs.items():
+                    with self.subTest(method=name):
+                        source += (
+                            "    return {'assumptions': ['fixture universe'], 'method': {'type': '" + name + "'}, "
+                            "'data_coverage': {'actual_start': str(close.index.min().date()), 'actual_end': str(close.index.max().date())}, "
+                            "'metrics': {'mean': float(values.mean().mean())}, 'sample_counts': {'observations': int(values.count().sum())}, 'warnings': []}\n"
+                        )
+                        authored = author_experiment("local fixture", spec(), client=Client({"program": source}))
+                        self.assertEqual(authored["status"], "ok", authored)
+                        result = run_research_experiment(spec(), authored_program=authored["program"],
+                                                        authoring_provenance=authored["provenance"])
+                        self.assertEqual(result.status, "success", result.errors)
+                        self.assertGreater(result.result["sample_counts"]["observations"], 0)
+                        self.assertIsNone(validate_experiment_result(result.result)[1])
+                        provenance = {key: result.provenance[key] for key in experiment_module.EXPERIMENT_PROVENANCE_FIELDS}
+                        self.assertIsNone(validate_experiment_provenance(provenance)[1])
+                        self.assertEqual(result.provenance["validation_status"]["execution"], "passed")
+                        self.assertNotIn("def run", result.to_json())
+                self.assertFalse((Path(directory) / "cache").exists())
+
     def test_schema_uses_structured_spec_without_source(self):
         schema = next(item for item in TOOL_SCHEMAS if item["name"] == "run_research_experiment")
 
@@ -182,7 +275,13 @@ class ExperimentArchitectureTests(unittest.TestCase):
         self.assertEqual(authored["status"], "ok")
         self.assertEqual(payload["experiment_spec"], spec())
         self.assertEqual(payload["capability_manifest"], CAPABILITY_MANIFEST)
-        self.assertEqual(payload["capability_manifest"]["version"], "1.4.0")
+        self.assertEqual(payload["capability_manifest"]["version"], "1.5.0")
+        self.assertEqual(payload["execution_budget"]["process_memory_bytes"], experiment_module.MEMORY_BYTES)
+        self.assertEqual(payload["execution_budget"]["duckdb_threads"], 1)
+        self.assertLess(payload["execution_budget"]["duckdb_memory_bytes"], payload["execution_budget"]["process_memory_bytes"])
+        self.assertEqual(set(payload["capability_manifest"]["authoring_constraints"]), {
+            "data_loading", "panel_lifetime", "tradability", "failure_handling",
+        })
         schema = payload["capability_manifest"]["result_schema"]
         self.assertEqual(set(schema["required"]), set(schema["properties"]))
         self.assertEqual(
@@ -780,6 +879,50 @@ class ExperimentSandboxTests(unittest.TestCase):
     def execute(self, source, **kwargs):
         with tempfile.TemporaryDirectory() as data_path:
             return _execute_isolated_source(source, data_path=data_path, **kwargs)
+
+    def test_duckdb_spills_only_under_bounded_workspace(self):
+        source = isolated_program(
+            "import duckdb, os\n"
+            "def probe():\n"
+            "    c = duckdb.connect()\n"
+            "    settings = dict(c.execute(\"SELECT name, value FROM duckdb_settings() WHERE name IN "
+            "('threads','memory_limit','temp_directory','max_temp_directory_size')\").fetchall())\n"
+            "    c.execute(\"SET memory_limit='16MiB'\")\n"
+            "    n = c.execute(\"SELECT count(*) FROM (SELECT i, md5(i::VARCHAR) s "
+            "FROM range(300000) t(i) ORDER BY s)\").fetchone()[0]\n"
+            "    spill = os.listdir('/work/cache/duckdb')\n"
+            "    c.close()\n"
+            "    fs = os.statvfs('/work')\n"
+            "    return {'settings': settings, 'sorted_rows': n, 'spill_files': spill, "
+            "'workspace_bytes': fs.f_blocks * fs.f_frsize}"
+        )
+        result = self.execute(source)
+        self.assertEqual(result["status"], "success", result)
+        metrics = result["result"]["metrics"]
+        self.assertEqual(metrics["settings"]["threads"], "1")
+        self.assertEqual(metrics["settings"]["temp_directory"], "/work/cache/duckdb")
+        self.assertEqual(metrics["settings"]["memory_limit"], "256.0 MiB")
+        self.assertEqual(metrics["settings"]["max_temp_directory_size"], "256.0 MiB")
+        self.assertEqual(metrics["sorted_rows"], 300000)
+        self.assertTrue(metrics["spill_files"])
+        self.assertEqual(metrics["workspace_bytes"], experiment_module.WORKSPACE_BYTES)
+
+    def test_workspace_capacity_is_enforced(self):
+        result = self.execute(
+            "def run():\n"
+            "    with open('/work/full', 'wb') as f:\n"
+            "        block = b'x' * (1024 * 1024)\n"
+            "        for i in range(513):\n"
+            "            f.write(block)\n"
+            "    return {}\n"
+        )
+        self.assertEqual(result["status"], "error", result)
+        self.assertEqual(result["error_type"], "experiment_resource_limit")
+
+    def test_native_stderr_output_is_bounded(self):
+        result = self.execute("import os\ndef run():\n    os.write(2, b'x' * 70000)\n    return {}\n")
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["error_type"], "experiment_resource_limit")
 
     def test_host_secrets_and_dotenv_are_not_visible(self):
         with tempfile.TemporaryDirectory() as host_directory:

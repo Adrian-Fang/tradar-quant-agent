@@ -23,12 +23,16 @@ from ..core.resources import REPO_ROOT, load_json_value, load_prompt
 
 
 MAX_PROGRAM_CHARS = 50_000
-WALL_TIMEOUT_SECONDS = 30
-CPU_SECONDS = 20
-MEMORY_BYTES = 2 * 1024**3
+WALL_TIMEOUT_SECONDS = 90
+CPU_SECONDS = 60
+# The real all-market cold close load peaks at ~2.54 GiB virtual / 1.10 GiB RSS.
+MEMORY_BYTES = 4 * 1024**3
 MAX_PROCESSES = 1
 MAX_OPEN_FILES = 64
 MAX_OUTPUT_BYTES = 64 * 1024
+WORKSPACE_BYTES = 512 * 1024**2
+DUCKDB_MEMORY_BYTES = 256 * 1024**2
+DUCKDB_SPILL_BYTES = 256 * 1024**2
 EXPERIMENT_SPEC_FIELDS = {
     "objective",
     "method",
@@ -477,6 +481,15 @@ def build_authoring_payload(
         "user_request": user_request,
         "experiment_spec": dict(spec),
         "capability_manifest": CAPABILITY_MANIFEST,
+        "execution_budget": {
+            "process_memory_bytes": MEMORY_BYTES,
+            "duckdb_memory_bytes": DUCKDB_MEMORY_BYTES,
+            "duckdb_threads": 1,
+            "spill_bytes": DUCKDB_SPILL_BYTES,
+            "workspace_bytes": WORKSPACE_BYTES,
+            "wall_seconds": WALL_TIMEOUT_SECONDS,
+            "cpu_seconds": CPU_SECONDS,
+        },
     }
     if repair_feedback:
         request["repair_feedback"] = repair_feedback[:2000]
@@ -611,6 +624,13 @@ def _isolation_config(root: Path, data_path: Path) -> dict[str, Any]:
             "processes": MAX_PROCESSES,
             "open_files": MAX_OPEN_FILES,
             "output_bytes": MAX_OUTPUT_BYTES,
+            "workspace_bytes": WORKSPACE_BYTES,
+        },
+        "duckdb": {
+            "threads": 1,
+            "memory_limit": f"{DUCKDB_MEMORY_BYTES}B",
+            "temp_directory": "/work/cache/duckdb",
+            "max_temp_directory_size": f"{DUCKDB_SPILL_BYTES}B",
         },
     }
 
@@ -625,7 +645,7 @@ def _prepare_root(root: Path) -> None:
 def _resource_limit_termination(
     return_code: int, cpu_seconds_used: float, cpu_limit_seconds: int
 ) -> bool:
-    limit_signals = {signal.SIGKILL, signal.SIGXCPU}
+    limit_signals = {signal.SIGKILL, signal.SIGXCPU, signal.SIGXFSZ}
     return (
         return_code in {-int(sig) for sig in limit_signals}
         or return_code in {128 + int(sig) for sig in limit_signals}
@@ -669,6 +689,7 @@ def _execute_isolated_source(
         config = _isolation_config(root, selected_data.resolve())
         config["limits"]["memory_bytes"] = memory_bytes
         config["limits"]["cpu_seconds"] = cpu_seconds
+        config["duckdb"]["memory_limit"] = f"{min(DUCKDB_MEMORY_BYTES, memory_bytes // 8)}B"
         config_path = run_dir / "config.json"
         config_path.write_text(json.dumps(config), encoding="utf-8")
         stdout_path = run_dir / "stdout"
@@ -702,16 +723,26 @@ def _execute_isolated_source(
                     shell=False,
                     start_new_session=True,
                 )
-                try:
-                    return_code = process.wait(timeout=wall_timeout)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
+                deadline = time.monotonic() + wall_timeout
+                while True:
+                    if max(stdout_path.stat().st_size, stderr_path.stat().st_size) > MAX_OUTPUT_BYTES:
+                        error_type = "experiment_resource_limit"
+                        message = "experiment exceeded output limit"
+                    elif time.monotonic() >= deadline:
+                        error_type = "experiment_timeout"
+                        message = f"experiment exceeded {wall_timeout:g}s wall-time limit"
+                    else:
+                        try:
+                            return_code = process.wait(timeout=max(0.001, min(0.05, deadline - time.monotonic())))
+                            break
+                        except subprocess.TimeoutExpired:
+                            continue
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                     process.wait()
-                    return {
-                        "status": "error",
-                        "error_type": "experiment_timeout",
-                        "message": f"experiment exceeded {wall_timeout:g}s wall-time limit",
-                    }
+                    return {"status": "error", "error_type": error_type, "message": message}
             usage_after = resource.getrusage(resource.RUSAGE_CHILDREN)
         except OSError as exc:
             return {
@@ -720,14 +751,14 @@ def _execute_isolated_source(
                 "message": f"could not start isolated executor: {type(exc).__name__}: {exc}",
             }
 
-        stdout = stdout_path.read_bytes()
-        stderr = stderr_path.read_bytes()
-        if len(stdout) > MAX_OUTPUT_BYTES or len(stderr) > MAX_OUTPUT_BYTES:
+        if max(stdout_path.stat().st_size, stderr_path.stat().st_size) > MAX_OUTPUT_BYTES:
             return {
                 "status": "error",
                 "error_type": "experiment_resource_limit",
                 "message": "experiment exceeded output limit",
             }
+        stdout = stdout_path.read_bytes()
+        stderr = stderr_path.read_bytes()
         try:
             payload = json.loads(stdout.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):

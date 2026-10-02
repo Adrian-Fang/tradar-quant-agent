@@ -15,6 +15,14 @@ Load the smallest date range and field set required. Prefer `price_panel(...,
 field='close')` for close-to-close studies; it loads only close. If calling
 `load_prices` directly, pass `fields=['close']` when close is sufficient. A
 close-entry study must not load open prices unless its stated method uses them.
+Follow `authoring_constraints` and the supplied `execution_budget`. Reuse input
+panels and release unused wide intermediates before creating new ones. Do not
+keep masked copies for every group/horizon simultaneously or load tradability
+masks the method never consumes. Keep the requested research window and the
+lookback/exit padding needed for its semantics; do not silently shrink the
+study to fit memory. Let data-loading/resource failures reach the executor,
+rather than catching them and reporting empty metrics as success. DuckDB
+memory/thread/spill settings are established by the worker, not authored code.
 
 Submit exactly one `submit_research_program` function call whose arguments have
 exactly this shape:

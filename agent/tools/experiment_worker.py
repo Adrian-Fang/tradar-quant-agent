@@ -148,14 +148,18 @@ def _bind_read_only(source: str, target: Path, *, noexec: bool = False) -> None:
     _mount(None, target, flags=flags)
 
 
-def _bind_workspace(source: str, target: Path) -> None:
+def _mount_workspace(source: str, target: Path, size: int) -> None:
+    program = (Path(source) / "experiment.py").read_bytes()
     target.mkdir(parents=True, exist_ok=True)
-    _mount(source, target, flags=MS_BIND | MS_REC)
     _mount(
-        None,
+        "tmpfs",
         target,
-        flags=MS_BIND | MS_REMOUNT | MS_NOSUID | MS_NODEV | MS_NOEXEC,
+        filesystem="tmpfs",
+        flags=MS_NOSUID | MS_NODEV | MS_NOEXEC,
+        data=f"size={size},nr_inodes=4096,mode=700",
     )
+    (target / "experiment.py").write_bytes(program)
+    (target / "cache/duckdb").mkdir(parents=True, mode=0o700)
 
 
 def _drop_capabilities() -> None:
@@ -180,7 +184,7 @@ def _apply_limits(limits: dict[str, int]) -> None:
     resource.setrlimit(resource.RLIMIT_AS, (limits["memory_bytes"], limits["memory_bytes"]))
     resource.setrlimit(resource.RLIMIT_NPROC, (limits["processes"], limits["processes"]))
     resource.setrlimit(resource.RLIMIT_NOFILE, (limits["open_files"], limits["open_files"]))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (limits["output_bytes"], limits["output_bytes"]))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (limits["workspace_bytes"], limits["workspace_bytes"]))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
@@ -196,7 +200,7 @@ def _setup(config: dict[str, Any]) -> None:
         _bind_read_only(
             str(Path(config["data_path"]) / name), root / "data" / name, noexec=True
         )
-    _bind_workspace(config["work_path"], root / "work")
+    _mount_workspace(config["work_path"], root / "work", config["limits"]["workspace_bytes"])
     _mount(
         "proc",
         root / "proc",
@@ -219,10 +223,26 @@ def _setup(config: dict[str, Any]) -> None:
     sys.path[:] = config["python_path"]
 
 
+def _configure_duckdb(settings: dict[str, Any]) -> None:
+    """Apply worker-only settings before any canonical loader imports connect."""
+    import duckdb
+
+    original_connect = duckdb.connect
+
+    def connect(database=":memory:", read_only=False, config=None):
+        return original_connect(
+            database, read_only=read_only, config={**(config or {}), **settings}
+        )
+
+    duckdb.connect = connect
+
+
 def _error_type(exc: BaseException) -> str:
     if isinstance(exc, ImportError):
         return "experiment_import_error"
     if isinstance(exc, MemoryError):
+        return "experiment_resource_limit"
+    if type(exc).__module__ in {"duckdb", "_duckdb"} and type(exc).__name__ == "OutOfMemoryException":
         return "experiment_resource_limit"
     if isinstance(exc, RuntimeError) and "output limit" in str(exc):
         return "experiment_resource_limit"
@@ -239,6 +259,8 @@ def _error_type(exc: BaseException) -> str:
         errno.EHOSTUNREACH,
     }:
         return "experiment_sandbox_violation"
+    if isinstance(exc, OSError) and exc.errno in {errno.ENOSPC, errno.EFBIG}:
+        return "experiment_resource_limit"
     if isinstance(exc, (TypeError, ValueError)) and "JSON" in str(exc):
         return "experiment_invalid_result"
     return "experiment_runtime_error"
@@ -257,7 +279,10 @@ def main() -> int:
         return 70
 
     try:
-        with contextlib.redirect_stdout(_LimitedWriter(config["limits"]["output_bytes"])):
+        with contextlib.redirect_stdout(_LimitedWriter(config["limits"]["output_bytes"])), contextlib.redirect_stderr(
+            _LimitedWriter(config["limits"]["output_bytes"])
+        ):
+            _configure_duckdb(config["duckdb"])
             namespace = runpy.run_path("/work/experiment.py", run_name="__experiment__")
             run = namespace.get("run")
             if not callable(run):

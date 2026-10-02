@@ -13,6 +13,59 @@ from utils import loader
 
 
 class LimitMoveMaskTests(unittest.TestCase):
+    def test_cold_window_adjustment_matches_canonical_math_without_full_history_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "prices.duckdb")
+            con = duckdb.connect(database)
+            con.execute("CREATE TABLE history(symbol VARCHAR, date DATE, close DOUBLE, volume DOUBLE)")
+            con.execute("CREATE TABLE ex_factors(symbol VARCHAR, date DATE, ex_factor DOUBLE)")
+            con.execute("""INSERT INTO history VALUES
+                ('600000','2026-01-09',10,100), ('600000','2026-01-12',11,110),
+                ('600001','2026-01-09',20,200), ('600001','2026-01-12',21,210)
+            """)
+            # Events before the window/on a weekend must still compound.
+            con.execute("""INSERT INTO ex_factors VALUES
+                ('600000','2000-01-01',2), ('600000','2026-01-10',1.5),
+                ('600001','2026-01-10',NULL)
+            """)
+            raw = con.execute("SELECT * FROM history ORDER BY date,symbol").df()
+            raw["date"] = pd.to_datetime(raw["date"])
+            con.close()
+            with patch.object(loader, "get_conn", side_effect=lambda: duckdb.connect(database)), patch.object(
+                loader, "_cache_is_fresh", return_value=False
+            ), patch.object(loader, "CACHE_PATH", Path(directory) / "missing.parquet"):
+                factors = loader._compute_full_cum_factor()
+                for adjust in ("backward", "forward"):
+                    for symbols in (None, ["600000"], ["not_present"]):
+                        with self.subTest(adjust=adjust, symbols=symbols):
+                            expected_raw = raw if symbols is None else raw[raw.symbol.isin(symbols)]
+                            expected = loader._apply_price_adjustment(expected_raw, factors, adjust)
+                            expected = expected.set_index(["date", "symbol"])[["close", "volume"]].sort_index()
+                            with patch.object(loader, "_compute_full_cum_factor", side_effect=AssertionError("full-history materialization")):
+                                actual = loader.load_prices("2026-01-09", "2026-01-12", adjust=adjust,
+                                                            fields=["close", "volume"], symbols=symbols)
+                            pd.testing.assert_frame_equal(actual, expected)
+                self.assertFalse(loader.CACHE_PATH.exists())
+
+    def test_cold_short_window_does_not_materialize_large_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "prices.duckdb")
+            con = duckdb.connect(database)
+            con.execute("""CREATE TABLE history AS
+                SELECT lpad((i % 100)::VARCHAR,6,'0') symbol,
+                       DATE '2000-01-01' + (i // 100)::INTEGER date,
+                       10.0::DOUBLE AS close FROM range(100000) t(i)""")
+            con.execute("INSERT INTO history VALUES ('000000','2026-01-05',20)")
+            con.execute("CREATE TABLE ex_factors(symbol VARCHAR, date DATE, ex_factor DOUBLE)")
+            con.execute("INSERT INTO ex_factors VALUES ('000000','1999-01-01',2)")
+            con.close()
+            with patch.object(loader, "get_conn", side_effect=lambda: duckdb.connect(database)), patch.object(
+                loader, "_cache_is_fresh", return_value=False
+            ), patch.object(loader, "_load_full_cum_factor", side_effect=AssertionError("full-history cache")):
+                result = loader.load_prices("2026-01-05", "2026-01-05", adjust="backward", fields=["close"])
+            self.assertEqual(result.shape, (1, 1))
+            self.assertEqual(result.iloc[0, 0], 40)
+
     def test_price_panel_loads_only_requested_field(self) -> None:
         index = pd.MultiIndex.from_tuples(
             [(pd.Timestamp("2026-01-05"), "600000")],
