@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core.resources import load_prompt
+from ..core.providers import provider_error_type
 from .semantic_retriever import retrieve_semantic
 
 
@@ -60,7 +61,7 @@ def _verify_batch(query: str, candidates: list[dict[str, Any]], *, client: Any, 
         try:
             response = client.create(payload)
         except Exception as exc:
-            error_type, error = "provider_error", f"{type(exc).__name__}: {exc}"
+            error_type, error = provider_error_type(exc), f"{type(exc).__name__}: {exc}"
         else:
             error_type = "malformed_response"
             try:
@@ -110,7 +111,7 @@ def verify_record(
             "status": "error",
             "supported": None,
             "reason": "",
-            "error_type": "provider_error",
+            "error_type": provider_error_type(exc),
             "error": f"{type(exc).__name__}: {exc}",
         }
 

@@ -8,6 +8,8 @@ from time import perf_counter
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from .providers import provider_error_type
+
 # Prices are explicit, versioned configuration, separate from provider usage.
 PRICING_VERSION = "2026-09-18"
 MODEL_PRICING = {
@@ -173,6 +175,8 @@ def _aggregate(calls: list[dict[str, Any]]) -> dict[str, Any]:
         estimated_cost = None
     return {
         "calls": len(calls),
+        "attempt_count": sum(call["attempt_count"] for call in calls),
+        "retry_count": sum(call["retry_count"] for call in calls),
         "input_tokens": total("input_tokens"),
         "output_tokens": total("output_tokens"),
         "cached_tokens": total("cached_tokens"),
@@ -219,6 +223,7 @@ class RunTelemetry:
         latency_ms: float,
         success: bool,
         error_type: str | None = None,
+        attempts: list[dict[str, Any]] | None = None,
         at: datetime | None = None,
     ) -> None:
         usage = _usage(response) if success else {
@@ -227,6 +232,23 @@ class RunTelemetry:
             "cached_tokens": None,
             "reasoning_tokens": None,
         }
+        attempts = attempts or [{"attempt": 1, "latency_ms": latency_ms,
+                                 "success": success, "error_type": error_type}]
+        attempt_records = []
+        for attempt in attempts:
+            attempt_records.append({
+                "attempt": attempt["attempt"],
+                "latency_ms": round(attempt["latency_ms"], 3),
+                "backoff_ms": round(attempt.get("backoff_ms", 0), 3),
+                "success": attempt["success"],
+                "error_type": attempt["error_type"],
+                **(_usage({"usage": attempt["usage"]}) if "usage" in attempt else usage),
+            })
+        if len(attempt_records) > 1:
+            # A timed-out attempt may have been billed; unknown usage is not zero.
+            usage = {key: (sum(item[key] for item in attempt_records)
+                           if all(item[key] is not None for item in attempt_records) else None)
+                     for key in usage}
         self.calls.append({
             "stage": stage,
             "provider": provider,
@@ -249,6 +271,9 @@ class RunTelemetry:
             ),
             "success": success,
             "error_type": error_type,
+            "attempt_count": len(attempt_records),
+            "retry_count": max(0, len(attempt_records) - 1),
+            "attempts": attempt_records,
         })
 
     def envelope(self) -> dict[str, Any]:
@@ -306,7 +331,8 @@ class TelemetryClient:
                 model=model,
                 latency_ms=(perf_counter() - started) * 1000,
                 success=False,
-                error_type=type(exc).__name__,
+                error_type=provider_error_type(exc),
+                attempts=getattr(exc, "attempts", None),
                 at=request_time,
             )
             raise
@@ -315,6 +341,7 @@ class TelemetryClient:
             provider=provider,
             model=model,
             response=response,
+            attempts=_field(_field(response, "provider_call", {}), "attempts"),
             latency_ms=(perf_counter() - started) * 1000,
             success=True,
             at=request_time,

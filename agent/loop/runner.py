@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 from ..core.contracts import ResearchRun, ToolResult
+from ..core.providers import provider_error_type
 from ..planning.planner import parse_plan_response
 from ..tools.executor import execute_steps
 
@@ -153,7 +154,7 @@ def run_loop(
                     "research_run": run,
                     "tool_results": results,
                     "iterations": iterations,
-                    "error_type": "provider_error",
+                    "error_type": provider_error_type(exc),
                     "error_stage": "loop",
                 "error": f"{type(exc).__name__}: {exc}",
             }

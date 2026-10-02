@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core.resources import load_prompt
+from ..core.providers import provider_error_type
 from .store import active_memories
 
 
@@ -89,7 +90,7 @@ def recall_memories(
             "status": "error",
             "selected_ids": [],
             "selected_memories": [],
-            "error_type": "provider_error",
+            "error_type": provider_error_type(exc),
             "error": f"{type(exc).__name__}: {exc}",
         }
 

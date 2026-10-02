@@ -20,6 +20,7 @@ from typing import Any
 
 from ..core.contracts import ToolResult
 from ..core.resources import REPO_ROOT, load_json_value, load_prompt
+from ..core.providers import provider_error_type
 
 
 MAX_PROGRAM_CHARS = 50_000
@@ -535,7 +536,7 @@ def author_experiment(
             "status": "error",
             "program": None,
             "provenance": None,
-            "error_type": "provider_error",
+            "error_type": provider_error_type(exc),
             "error": f"{type(exc).__name__}: {exc}",
         }
     authored, error = _authored_payload(response)

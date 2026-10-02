@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core.resources import load_prompt
+from ..core.providers import provider_error_type
 from ..tools.calling import TOOL_SCHEMAS
 
 
@@ -88,7 +89,7 @@ def plan_request(
         return {
             "status": "error",
             "plan": None,
-            "error_type": "provider_error",
+            "error_type": provider_error_type(exc),
             "error": f"{type(exc).__name__}: {exc}",
         }
 

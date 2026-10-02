@@ -10,6 +10,7 @@ import pytest
 from agent.agent import _knowledge_planning_brief, _knowledge_records_to_evidence, run_agent
 from agent.agent_eval import CASES, score_case
 from agent.core.contracts import ToolResult
+from agent.core.providers import ProviderError
 from agent.retrieval.loader import load_research_records
 
 
@@ -144,6 +145,20 @@ def test_knowledge_answer_errors_are_explicit(stage, failure):
     assert result["status"] == "error" and result["error_stage"] == stage
     assert result["error_type"] == ("provider_error" if failure == "provider" else "malformed_response")
     assert result["retrieval"]["status"] == "ok" and result["research_run"] is None
+
+
+@pytest.mark.parametrize("code", ["provider_timeout", "provider_rate_limit",
+                                  "provider_empty_response", "provider_invalid_response"])
+@pytest.mark.parametrize("stage", ["planning", "retrieval_verifier", "synthesis", "grounding"])
+def test_provider_operational_errors_remain_explicit_runtime_failures(stage, code):
+    option = {"planning": "planner", "retrieval_verifier": "verifier",
+              "synthesis": "synthesizer", "grounding": "grounder"}[stage]
+    result, _, _ = run_knowledge(**{option: Client(error=ProviderError(code, "fixture failure"))})
+    assert result["status"] == "error" and result["error_type"] == code
+    assert result["observed"]["outcome"]["status"] == "error"
+    assert result["research_run"] is None
+    assert not (result.get("grounding") or {}).get("fully_grounded")
+    assert result["telemetry"]["summary"]["provider_failure_stage"] == stage
 
 
 def test_knowledge_projection_is_verified_deduplicated_bounded_and_score_independent():

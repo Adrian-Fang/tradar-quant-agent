@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core.resources import load_prompt
+from ..core.providers import provider_error_type
 
 
 PROMPT = load_prompt("prompts/grounding.md")
@@ -93,7 +94,7 @@ def verify_answer_grounding(
         return {
             "status": "error",
             "assessment": None,
-            "error_type": "provider_error",
+            "error_type": provider_error_type(exc),
             "error": f"{type(exc).__name__}: {exc}",
         }
     parsed, parse_error = parse_grounding_response(

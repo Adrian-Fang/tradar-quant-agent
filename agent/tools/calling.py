@@ -8,7 +8,7 @@ import os
 from typing import Any
 
 from ..core.contracts import ResearchRun, ToolResult
-from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient
+from ..core.providers import DeepSeekChatClient, OpenAIResponsesClient, ProviderError
 from ..core.resources import load_prompt
 from .experiment import run_research_experiment
 from .research import evaluate_factor, inspect_universe, run_backtest
@@ -251,6 +251,8 @@ def run_tool_calling(
             f"model returned invalid JSON arguments: {exc}",
             run_id=run.run_id,
         )
+    except ProviderError as exc:
+        error = ToolResult.error("tool_calling", base_args, exc.code, str(exc), run_id=run.run_id)
     except RuntimeError as exc:
         code = "llm_client_unavailable" if "API_KEY" in str(exc) else "llm_execution_error"
         error = ToolResult.error("tool_calling", base_args, code, str(exc), run_id=run.run_id)

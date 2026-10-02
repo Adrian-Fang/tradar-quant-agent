@@ -115,7 +115,7 @@ class ToolCallingTests(unittest.TestCase):
                 ),
             ]))],
         ))
-        with patch("agent.core.providers.OpenAI") as openai_factory:
+        with patch("agent.core.providers.AsyncOpenAI") as openai_factory:
             client = DeepSeekChatClient(api_key="test-key", sdk_client=fake_sdk)
             normalized = client.create(_request_payload("统计 universe", "deepseek-v4-flash"))
             openai_factory.assert_not_called()
@@ -148,11 +148,15 @@ class ToolCallingTests(unittest.TestCase):
         self.assertNotIn("tool_choice", fake_sdk.payload)
 
     def test_openai_provider_uses_installed_sdk_resource(self):
-        fake_sdk = SimpleNamespace(responses=SimpleNamespace(create=lambda **_payload: {}))
-        with patch("agent.core.providers.OpenAI", return_value=fake_sdk) as openai_factory:
-            client = OpenAIResponsesClient(api_key="test-key")
-        openai_factory.assert_called_once()
-        self.assertIs(client.client, fake_sdk)
+        payloads = []
+        def create(**payload):
+            payloads.append(payload)
+            return {"output_text": "fixture"}
+        client = OpenAIResponsesClient(api_key="test-key", sdk_client=SimpleNamespace(
+            responses=SimpleNamespace(create=create)))
+        normalized = client.create({"model": "gpt-5", "input": "request"})
+        self.assertEqual(payloads, [{"model": "gpt-5", "input": "request"}])
+        self.assertEqual(normalized["output_text"], "fixture")
 
     def test_benchmark_covers_three_tool_boundaries(self):
         self.assertEqual(len(CASES), 8)
