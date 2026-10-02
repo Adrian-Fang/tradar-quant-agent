@@ -1,5 +1,5 @@
 {
-  "version": "1.5.0",
+  "version": "1.5.1",
   "authoring_constraints": {
     "data_loading": "Load only method-required fields and the requested date range plus necessary lookback/exit padding; do not silently shorten the research window or load full history to discover bounds.",
     "panel_lifetime": "Reuse each input panel. Release unused wide intermediates before loading or building another panel; aggregate per horizon/group rather than keeping all masked copies simultaneously.",
@@ -76,9 +76,10 @@
     "preferred": "Return JSON-native values.",
     "accepted": [
       "finite numpy scalars and arrays",
-      "pandas Timestamp, Timedelta, Series, DataFrame, Index, NA, and NaT values"
+      "pandas Timestamp, Timedelta, Series, DataFrame, Index, NA, and NaT values",
+      "mapping and pandas Series keys: strings, integers, booleans, finite floats, and supported date/time scalars; normalized to strings"
     ],
-    "rule": "Normalization applies to values only and never repairs a structurally invalid result field."
+    "rule": "Normalization converts supported values and scalar mapping/Series keys, rejecting duplicate keys after conversion. Null, non-finite, container, and unsupported object keys are rejected. It never repairs a structurally invalid result field."
   },
   "apis": [
     {

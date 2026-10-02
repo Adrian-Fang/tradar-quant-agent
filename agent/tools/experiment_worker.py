@@ -57,6 +57,19 @@ def _emit(value: dict[str, Any]) -> None:
     print(json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
 
 
+def _normalize_mapping(items, field: str) -> dict[str, Any]:
+    normalized = {}
+    for key, item in items:
+        key = _normalize_json(key, f"{field} key")
+        if not isinstance(key, (str, bool, int, float)):
+            raise TypeError(f"{field} has a mapping key that is not a JSON-compatible scalar")
+        key = str(key)
+        if key in normalized:
+            raise TypeError(f"{field} has duplicate keys after JSON normalization: {key!r}")
+        normalized[key] = _normalize_json(item, f"{field}.{key}")
+    return normalized
+
+
 def _normalize_json(value: Any, field: str = "result") -> Any:
     """Normalize common research values without repairing envelope structure."""
     module = type(value).__module__.split(".", 1)[0]
@@ -77,34 +90,14 @@ def _normalize_json(value: Any, field: str = "result") -> Any:
         if name == "Timedelta":
             return str(value)
         if name == "Series":
-            normalized = {}
-            for key, item in value.items():
-                key = _normalize_json(key, f"{field} key")
-                if not isinstance(key, (str, bool, int, float)) or (
-                    isinstance(key, float) and not math.isfinite(key)
-                ):
-                    raise TypeError(
-                        f"{field} has a pandas Series index that is not JSON-compatible"
-                    )
-                key = str(key)
-                if key in normalized:
-                    raise TypeError(
-                        f"{field} has duplicate pandas Series keys after JSON normalization"
-                    )
-                normalized[key] = _normalize_json(item, f"{field}.{key}")
-            return normalized
+            return _normalize_mapping(value.items(), field)
         if name == "DataFrame":
             return _normalize_json(value.to_dict(orient="records"), field)
         converter = getattr(value, "tolist", None) or getattr(value, "item", None)
         if callable(converter):
             return _normalize_json(converter(), field)
     if isinstance(value, Mapping):
-        if any(not isinstance(key, str) for key in value):
-            raise TypeError(f"{field} must use string JSON object keys")
-        return {
-            key: _normalize_json(item, f"{field}.{key}")
-            for key, item in value.items()
-        }
+        return _normalize_mapping(value.items(), field)
     if isinstance(value, (list, tuple)):
         return [
             _normalize_json(item, f"{field}[{index}]")

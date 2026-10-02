@@ -33,7 +33,7 @@ exactly this shape:
 
 `run()` must return an object matching the capability manifest's
 `result_schema`, which is the authoritative field contract. Prefer JSON-native
-values; the executor applies only the safe value conversions listed in
+values; the executor applies only the safe conversions listed in
 `result_normalization` and will not repair a wrong field shape. Put method
 detail inside its object, for example
 `{"type":"event_study","description":"close-to-close returns"}`. Use the

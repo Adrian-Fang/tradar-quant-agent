@@ -13,6 +13,8 @@ import unittest
 from unittest.mock import patch
 
 import duckdb
+import numpy as np
+import pandas as pd
 
 import agent.tools.experiment as experiment_module
 from agent.tools import experiment_worker
@@ -99,6 +101,7 @@ EVENT_PROGRAM = (
     "        },\n"
     "        'metrics': {\n"
     "            'mean_forward_return': pd.Series([0.01, 0.02], index=[1, 3]),\n"
+    "            'yearly_stability': {2025: {'mean': np.float64(0.01)}},\n"
     "            'summary': pd.DataFrame([{'horizon': 1, 'mean': np.float64(0.01)}]),\n"
     "        },\n"
     "        'sample_counts': {'event_days': np.int64(2)},\n"
@@ -276,7 +279,7 @@ class ExperimentArchitectureTests(unittest.TestCase):
         self.assertEqual(authored["status"], "ok")
         self.assertEqual(payload["experiment_spec"], spec())
         self.assertEqual(payload["capability_manifest"], CAPABILITY_MANIFEST)
-        self.assertEqual(payload["capability_manifest"]["version"], "1.5.0")
+        self.assertEqual(payload["capability_manifest"]["version"], "1.5.1")
         self.assertEqual(payload["execution_budget"]["process_memory_bytes"], experiment_module.MEMORY_BYTES)
         self.assertEqual(payload["execution_budget"]["duckdb_threads"], 1)
         self.assertLess(payload["execution_budget"]["duckdb_memory_bytes"], payload["execution_budget"]["process_memory_bytes"])
@@ -541,6 +544,66 @@ class ExperimentArchitectureTests(unittest.TestCase):
         _, error = validate_experiment_result({**valid, "method": {}})
         self.assertEqual(error, "result.method.type is required")
 
+    def test_result_normalization_accepts_nested_integer_year_keys(self):
+        raw = {
+            "assumptions": [],
+            "method": {"type": "event_study"},
+            "data_coverage": {"actual_start": None, "actual_end": None},
+            "metrics": {"yearly_stability": {
+                2021: {np.int64(5): np.float64(0.01)},
+                "2022": [{2023: 0.02}],
+            }},
+            "sample_counts": {np.int64(2021): np.int64(12)},
+            "warnings": [],
+        }
+        normalized = experiment_worker._normalize_json(raw)
+        self.assertEqual(normalized["metrics"]["yearly_stability"], {
+            "2021": {"5": 0.01}, "2022": [{"2023": 0.02}],
+        })
+        self.assertEqual(normalized["sample_counts"], {"2021": 12})
+        validated, error = validate_experiment_result(normalized)
+        self.assertIsNone(error)
+        self.assertEqual(validated, normalized)
+
+    def test_series_and_mapping_share_scalar_key_normalization(self):
+        for key, expected in (
+            ("2021", "2021"), (2021, "2021"), (np.int64(2021), "2021"),
+            (True, "True"), (1.5, "1.5"),
+            (pd.Timestamp("2021-01-01"), "2021-01-01T00:00:00"),
+        ):
+            for value in ({key: 0.01}, pd.Series([0.01], index=[key])):
+                with self.subTest(key=key, container=type(value).__name__):
+                    self.assertEqual(experiment_worker._normalize_json(value), {expected: 0.01})
+
+    def test_series_and_mapping_reject_collisions_after_key_normalization(self):
+        for key, string_key in ((2021, "2021"), (np.int64(2021), "2021"), (True, "True"), (1.5, "1.5")):
+            for value in ({key: 1, string_key: 2}, pd.Series([1, 2], index=[key, string_key])):
+                with self.subTest(key=key, container=type(value).__name__):
+                    with self.assertRaisesRegex(TypeError, "result.metrics.yearly_stability.*duplicate keys.*JSON") as caught:
+                        experiment_worker._normalize_json({"metrics": {"yearly_stability": value}})
+                    self.assertEqual(experiment_worker._error_type(caught.exception), "experiment_invalid_result")
+                    self.assertIn(string_key, str(caught.exception))
+        # Series duplicate labels must not disappear through a to_dict() conversion.
+        with self.assertRaisesRegex(TypeError, "duplicate keys.*JSON"):
+            experiment_worker._normalize_json(pd.Series([1, 2], index=[2021, 2021]))
+
+    def test_series_and_mapping_still_reject_invalid_keys(self):
+        for key in (None, (2021, "group"), b"2021", object(), float("inf"), float("nan"), pd.NA, pd.NaT):
+            for value in ({key: 1}, pd.Series([1], index=[key])):
+                with self.subTest(key=key, container=type(value).__name__):
+                    with self.assertRaisesRegex(TypeError, "result.metrics.*JSON") as caught:
+                        experiment_worker._normalize_json({"metrics": value})
+                    self.assertEqual(experiment_worker._error_type(caught.exception), "experiment_invalid_result")
+
+    def test_key_normalization_does_not_repair_invalid_result_field_shapes(self):
+        raw = {
+            "assumptions": [], "method": "event_study",
+            "data_coverage": {"actual_start": None, "actual_end": None},
+            "metrics": {2021: 0.01}, "sample_counts": {}, "warnings": [],
+        }
+        _, error = validate_experiment_result(experiment_worker._normalize_json(raw))
+        self.assertEqual(error, "result.method must be an object, got str")
+
     @_requires_sandbox
     def test_runtime_authors_executes_and_does_not_leak_source(self):
         planner = Client({
@@ -601,6 +664,7 @@ class ExperimentArchitectureTests(unittest.TestCase):
             evidence["result"]["metrics"]["mean_forward_return"],
             {"1": 0.01, "3": 0.02},
         )
+        self.assertEqual(evidence["result"]["metrics"]["yearly_stability"], {"2025": {"mean": 0.01}})
         self.assertEqual(
             evidence["provenance"]["actual_data_bounds"],
             {"start": "2025-01-02T00:00:00", "end": "2025-01-03T00:00:00"},
