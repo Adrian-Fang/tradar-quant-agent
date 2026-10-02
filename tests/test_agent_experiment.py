@@ -154,6 +154,7 @@ class ExperimentArchitectureTests(unittest.TestCase):
 
         self.assertTrue(expected.issubset(config["python_library_paths"]))
         self.assertTrue(expected.issubset(config["python_path"]))
+        self.assertEqual(config["environment"]["TRADAR_EXPERIMENT_SANDBOX"], "1")
 
     def test_cpu_limit_classification_handles_unshare_exit_status(self):
         self.assertTrue(experiment_module._resource_limit_termination(1, 1.0, 1))

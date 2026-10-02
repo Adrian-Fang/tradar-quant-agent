@@ -227,7 +227,9 @@ def load_prices(
         params.extend(normalized)
 
     adjusted_fields = set(selected) & {"open", "high", "low", "close"}
-    cold_adjustment = bool(adjust != "none" and adjusted_fields and (
+    # Only the isolated worker opts out of shared cache rebuild/refresh semantics.
+    cold_adjustment = bool(os.environ.get("TRADAR_EXPERIMENT_SANDBOX") == "1"
+                           and adjust != "none" and adjusted_fields and (
         force_refresh_cache or not _cache_is_fresh()
     ))
     con = get_conn()

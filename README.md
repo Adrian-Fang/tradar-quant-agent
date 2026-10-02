@@ -69,7 +69,7 @@ Deterministic safety gate 同时覆盖常见英文攻击及中文直接指令：
 
 历史知识 `no_action` 之后，只有 verifier 明确接受的记录才可转换为有界 `knowledge_record` evidence，保留 `knowledge-<research_id>` 引用和文件 hash/date/status 等 provenance；不创建 ResearchRun 或执行研究。无支持则 controlled no-action/no-evidence，不从 related context 拼凑答案。相关记录不代表完整支持：synthesis 可 abstain，grounding 不支持的答案会被 block。
 
-Authored Research Experiments 在隔离的只读数据/code sandbox 内执行：4 GiB 地址空间、60 秒 CPU / 90 秒 wall-time，单进程、64 个文件描述符及 64 KiB 输出限制。Worker 独立配置 DuckDB 为 1 thread / 256 MiB memory，spill 位于 `/work/cache/duckdb`（最多 256 MiB）；整个 `/work` 为 512 MiB 有界 tmpfs。共享/生产 DuckDB 默认值不变。Cold-window 复权读取保留全历史事件累计口径，但不构建全历史 daily-factor cache；authoring 必须只加载需要的字段/掩码并及时释放宽表中间结果，不能缩短研究窗口或吞掉资源错误。超限保留结构化执行错误；这些限制不保证任意规模研究都能完成。
+Authored Research Experiments 在隔离的只读数据/code sandbox 内执行：4 GiB 地址空间、60 秒 CPU / 90 秒 wall-time，单进程、64 个文件描述符及 64 KiB 输出限制。Worker 独立配置 DuckDB 为 1 thread / 256 MiB memory，spill 位于 `/work/cache/duckdb`（最多 256 MiB）；整个 `/work` 为 512 MiB 有界 tmpfs。共享/生产 DuckDB 默认值不变。仅 worker 通过 `TRADAR_EXPERIMENT_SANDBOX=1` 启用 bounded cold-window 复权读取：保留全历史事件累计口径，但不构建全历史 daily-factor cache；sandbox 外仍保留共享 cache rebuild / force-refresh 语义。Authoring 必须只加载需要的字段/掩码并及时释放宽表中间结果，不能缩短研究窗口或吞掉资源错误。超限保留结构化执行错误；这些限制不保证任意规模研究都能完成。
 
 ## 架构快照 / Architecture Snapshot
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +14,46 @@ from utils import loader
 
 
 class LimitMoveMaskTests(unittest.TestCase):
+    def test_shared_cache_contract_and_explicit_sandbox_opt_in(self):
+        for flag in (None, "0", "1"):
+            for state in ("missing", "stale", "force_refresh", "fresh"):
+                with self.subTest(flag=flag, cache=state), tempfile.TemporaryDirectory() as directory:
+                    database = str(Path(directory) / "prices.duckdb")
+                    cache_dir = Path(directory) / "cache"
+                    cache = cache_dir / "cum_factor.parquet"
+                    con = duckdb.connect(database)
+                    con.execute("CREATE TABLE history(symbol VARCHAR, date DATE, close DOUBLE)")
+                    con.execute("INSERT INTO history VALUES ('600000','2024-12-31',5), ('600000','2025-01-02',10)")
+                    con.execute("CREATE TABLE ex_factors(symbol VARCHAR, date DATE, ex_factor DOUBLE)")
+                    con.execute("INSERT INTO ex_factors VALUES ('600000','2024-01-01',2)")
+                    if state != "missing":
+                        cache_dir.mkdir()
+                        con.execute("COPY (SELECT symbol,date,1.0 cum_factor FROM history) TO ? (FORMAT PARQUET)", [str(cache)])
+                    con.close()
+                    if cache.exists():
+                        timestamp = 0 if state == "stale" else Path(database).stat().st_mtime + 60
+                        os.utime(cache, (timestamp, timestamp))
+                    before = cache.read_bytes() if cache.exists() else None
+                    with patch.object(loader, "get_conn", side_effect=lambda: duckdb.connect(database)), patch.object(
+                        loader, "DB_PATH", database
+                    ), patch.object(loader, "CACHE_DIR", cache_dir), patch.object(loader, "CACHE_PATH", cache), patch.dict(os.environ):
+                        if flag is None:
+                            os.environ.pop("TRADAR_EXPERIMENT_SANDBOX", None)
+                        else:
+                            os.environ["TRADAR_EXPERIMENT_SANDBOX"] = flag
+                        result = loader.load_prices("2025-01-02", "2025-01-02", adjust="backward",
+                                                    fields=["close"], force_refresh_cache=state == "force_refresh")
+                    self.assertEqual(result.iloc[0, 0], 10 if state == "fresh" else 20)
+                    if flag == "1":
+                        self.assertEqual(cache.read_bytes() if cache.exists() else None, before)
+                    else:
+                        self.assertTrue(cache.is_file())
+                        con = duckdb.connect()
+                        factors = con.execute("SELECT date,cum_factor FROM read_parquet(?) ORDER BY date", [str(cache)]).fetchall()
+                        con.close()
+                        self.assertEqual(len(factors), 2)  # Shared cache includes dates outside the requested window.
+                        self.assertEqual([row[1] for row in factors], [1, 1] if state == "fresh" else [2, 2])
+
     def test_cold_window_adjustment_matches_canonical_math_without_full_history_cache(self):
         with tempfile.TemporaryDirectory() as directory:
             database = str(Path(directory) / "prices.duckdb")
@@ -33,7 +74,9 @@ class LimitMoveMaskTests(unittest.TestCase):
             con.close()
             with patch.object(loader, "get_conn", side_effect=lambda: duckdb.connect(database)), patch.object(
                 loader, "_cache_is_fresh", return_value=False
-            ), patch.object(loader, "CACHE_PATH", Path(directory) / "missing.parquet"):
+            ), patch.object(loader, "CACHE_PATH", Path(directory) / "missing.parquet"), patch.dict(
+                os.environ, {"TRADAR_EXPERIMENT_SANDBOX": "1"}
+            ):
                 factors = loader._compute_full_cum_factor()
                 for adjust in ("backward", "forward"):
                     for symbols in (None, ["600000"], ["not_present"]):
@@ -61,7 +104,9 @@ class LimitMoveMaskTests(unittest.TestCase):
             con.close()
             with patch.object(loader, "get_conn", side_effect=lambda: duckdb.connect(database)), patch.object(
                 loader, "_cache_is_fresh", return_value=False
-            ), patch.object(loader, "_load_full_cum_factor", side_effect=AssertionError("full-history cache")):
+            ), patch.object(loader, "_load_full_cum_factor", side_effect=AssertionError("full-history cache")), patch.dict(
+                os.environ, {"TRADAR_EXPERIMENT_SANDBOX": "1"}
+            ):
                 result = loader.load_prices("2026-01-05", "2026-01-05", adjust="backward", fields=["close"])
             self.assertEqual(result.shape, (1, 1))
             self.assertEqual(result.iloc[0, 0], 40)

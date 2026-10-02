@@ -86,7 +86,7 @@
       "name": "load_prices",
       "signature": "load_prices(start, end, adjust='forward', symbols=None, fields=None)",
       "returns": "DataFrame indexed by (date, symbol) with only requested fields; fields=None preserves open/high/low/close/volume/amount",
-      "notes": "adjust is one of none, forward, backward; request the smallest field set needed. Cold-window adjusted reads apply full-history event compounding within the date-bounded query without constructing a full-history daily-factor cache."
+      "notes": "adjust is one of none, forward, backward; request the smallest field set needed. In the experiment sandbox only, cold-window adjusted reads apply full-history event compounding within the date-bounded query without constructing a full-history daily-factor cache. Shared callers retain cache rebuild/force-refresh semantics."
     },
     {
       "module": "utils.loader",

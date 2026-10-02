@@ -609,6 +609,7 @@ def _isolation_config(root: Path, data_path: Path) -> dict[str, Any]:
         "environment": {
             "DATA_PATH": "/data",
             "TRADAR_CACHE_DIR": "/work/cache",
+            "TRADAR_EXPERIMENT_SANDBOX": "1",
             "HOME": "/work",
             "TMPDIR": "/work",
             "PYTHONNOUSERSITE": "1",

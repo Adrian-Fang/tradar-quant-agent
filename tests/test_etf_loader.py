@@ -19,6 +19,7 @@ class EtfLoaderTest(unittest.TestCase):
                 mock.patch.object(duckdb_manager, "DB_PATH", db_path),
                 mock.patch.object(loader, "DB_PATH", db_path),
                 mock.patch.object(loader, "CACHE_PATH", cache_path),
+                mock.patch.object(loader, "CACHE_DIR", Path(directory)),
                 mock.patch.object(loader, "get_conn", connect),
             ):
                 duckdb_manager.init_database()
