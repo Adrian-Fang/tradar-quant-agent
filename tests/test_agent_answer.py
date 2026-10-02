@@ -160,6 +160,63 @@ class AnswerSynthesisTests(unittest.TestCase):
         self.assertIn("should use, avoid, or use", prompt)
         self.assertIn("does not establish causality", prompt)
 
+    def test_runtime_synthesis_guidance_requires_matched_effect_evidence(self):
+        case = next(case for case in CASES if case["id"] == "unmatched_subgroup_breakout_effect")
+        client = FakeClient(output=response(
+            status=case["expected"]["status"], answer=case["expected"]["fixture_answer"],
+            evidence_ids=case["expected"]["evidence_ids"],
+        ))
+        result = synthesize_answer(case["user_request"], case["evidence"], client=client)
+        prompt = client.calls[0]["instructions"]
+        self.assertEqual(json.loads(client.calls[0]["input"])["evidence"], case["evidence"])
+        self.assertIn("require matched comparison", prompt)
+        self.assertIn("same subgroup/universe", prompt)
+        self.assertIn("unmatched aggregate plain-breakout baseline", prompt)
+        self.assertIn("Matching alone", prompt)
+        self.assertEqual(result["result"]["status"], "insufficient_evidence")
+
+    def test_runtime_synthesis_guidance_requires_compatible_return_horizons(self):
+        case = next(case for case in CASES if case["id"] == "incompatible_event_benchmark_horizons")
+        client = FakeClient(output=response(
+            status=case["expected"]["status"], answer=case["expected"]["fixture_answer"],
+            evidence_ids=case["expected"]["evidence_ids"],
+        ))
+        result = synthesize_answer(case["user_request"], case["evidence"], client=client)
+        prompt = client.calls[0]["instructions"]
+        self.assertEqual(json.loads(client.calls[0]["input"])["evidence"], case["evidence"])
+        self.assertIn("incompatible horizons or frequencies", prompt)
+        self.assertIn("H20 cumulative event", prompt)
+        self.assertIn("not directly comparable", prompt)
+        self.assertIn("Do not multiply", prompt)
+        self.assertEqual(result["result"]["status"], "insufficient_evidence")
+
+    def test_comparison_boundary_eval_rejects_uat_overclaims(self):
+        for identity, overclaim in (
+            ("unmatched_subgroup_breakout_effect", "Volume confirmation improves low-volatility returns by 2 percentage points."),
+            ("incompatible_event_benchmark_horizons", "The breakout outperformed CSI 300; its excess return was +2.90%."),
+        ):
+            with self.subTest(case=identity):
+                case = next(case for case in CASES if case["id"] == identity)
+                outcome = run_case(case, client=FixtureClient(case), model="fixture")
+                self.assertTrue(score_case(case, outcome, 1)["case_pass"])
+                # Append the exact invalid inference: all other required facts,
+                # citations and status still match, isolating the overclaim.
+                bad = {**outcome["parsed"], "answer": outcome["parsed"]["answer"] + " " + overclaim}
+                outcome = run_case(case, client=FakeClient(output=bad), model="fixture")
+                self.assertIsNone(outcome["parse_error"])
+                self.assertIsNone(outcome["contract_error"])
+                row = score_case(case, outcome, 1)
+                self.assertFalse(row["case_pass"])
+                self.assertTrue(row["status_correct"])
+                self.assertEqual(row["required_content_coverage"], 1.0)
+                self.assertGreater(row["forbidden_content_violations"], 0)
+
+    def test_matched_horizon_aligned_observed_comparisons_remain_allowed(self):
+        case = next(case for case in CASES if case["id"] == "matched_horizon_aligned_comparisons")
+        outcome = run_case(case, client=FixtureClient(case), model="fixture")
+        self.assertTrue(score_case(case, outcome, 1)["case_pass"])
+        self.assertEqual(outcome["parsed"]["status"], "success")
+
     def test_evidence_ids_are_minimal_but_keep_required_multi_evidence(self):
         insufficient = next(
             case for case in CASES if case["id"] == "insufficient_intraday_vwap_claim"

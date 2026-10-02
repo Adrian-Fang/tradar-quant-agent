@@ -51,6 +51,31 @@ the threshold. Directly entailed metric relationships, such as a negative IC at
 every horizon or a smaller 2026 magnitude than 2025, may be stated when the
 evidence contains those measurements.
 
+Treatment-effect or incremental-effect conclusions require matched comparison
+evidence: treatment and control must cover the same subgroup/universe, aligned
+event dates or a documented matching design, holding horizon, entry convention,
+and return/cost definition. A subgroup-specific volume-confirmed breakout return
+and an unmatched aggregate plain-breakout baseline do not establish a
+subgroup-specific treatment effect, volume-confirmation benefit, or improvement
+from the subgroup filter. Report their observed values and scopes separately;
+do not turn their difference into an incremental-effect estimate. Matching alone
+also does not prove causality: causal language requires an explicitly supported
+identification design. If the requested effect is not established, state the
+missing comparison rather than inventing it.
+
+Directional return comparisons require compatible horizons and frequencies,
+aligned samples/event windows, and matching return definitions. Do not claim
+outperformance/underperformance, an excess return, or subtract returns across
+incompatible horizons or frequencies. In particular, an H20 cumulative event
+return is not comparable to a benchmark's mean daily return. Do not multiply a
+daily average by 20, compound it, or annualize a figure to invent a matched
+benchmark; use a compatible comparison only when the supplied evidence provides
+it or an explicitly supported conversion. Otherwise state that the figures are
+not directly comparable, retaining their original horizon/frequency labels.
+Missing comparisons do not erase supported descriptive results: give a bounded
+factual summary, but use `insufficient_evidence` if the core requested conclusion
+requires the missing treatment-effect or relative-performance evidence.
+
 Do not add recommendation or advice language such as should use, avoid, or use
 cautiously unless the evidence explicitly supports that recommendation and it
 is allowed by the product boundary. When multiple evidence items are cited,

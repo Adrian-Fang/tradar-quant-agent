@@ -158,6 +158,53 @@
         "forbidden_content": [],
         "fixture_answer": "Insufficient evidence: the supplied records do not test an intraday VWAP strategy, so they cannot establish its causal benefit."
       }
+    },
+    {
+      "id": "unmatched_subgroup_breakout_effect",
+      "slice": "comparison_boundaries",
+      "user_request": "Does volume confirmation improve low-volatility breakout H20 returns by 2 percentage points?",
+      "evidence": [
+        {"id": "e1", "text": "2021-01-01 to 2026-09-30: low-volatility volume-confirmed breakout events had mean adjusted-close gross H20 cumulative return +3.00%."},
+        {"id": "e2", "text": "Over that study period, plain-breakout events across all eligible A-shares had mean adjusted-close gross H20 cumulative return +1.00%. This aggregate baseline does not report low-volatility subgroup controls or matched event-date comparisons."}
+      ],
+      "expected": {
+        "status": "insufficient_evidence",
+        "evidence_ids": ["e1", "e2"],
+        "required_content": [["+3.00%"], ["+1.00%"], ["low-volatility"], ["aggregate"], ["unmatched", "not matched"], ["cannot establish", "does not establish"]],
+        "forbidden_content": [["volume confirmation improves low-volatility returns by", "volume confirmation adds 2 percentage points"], ["the low-volatility filter causes"]],
+        "fixture_answer": "Insufficient evidence: the low-volatility volume-confirmed H20 return was +3.00% [e1], while the aggregate plain-breakout H20 return was +1.00% [e2]. The aggregate baseline is unmatched to the subgroup and event dates; this cannot establish the requested subgroup-specific incremental effect."
+      }
+    },
+    {
+      "id": "incompatible_event_benchmark_horizons",
+      "slice": "comparison_boundaries",
+      "user_request": "Did the breakout's H20 return outperform CSI 300?",
+      "evidence": [
+        {"id": "e1", "text": "2021-01-01 to 2026-09-30: breakout events had mean adjusted-close gross H20 cumulative return +3.00%, measured over 20 trading days after each event."},
+        {"id": "e2", "text": "CSI 300 mean daily close-to-close return over the study period was +0.10%. No benchmark H20 return aligned to the breakout event windows was computed."}
+      ],
+      "expected": {
+        "status": "insufficient_evidence",
+        "evidence_ids": ["e1", "e2"],
+        "required_content": [["H20", "20-day"], ["+3.00%"], ["daily"], ["+0.10%"], ["not directly comparable"], ["event-window", "event windows"]],
+        "forbidden_content": [["the breakout outperformed CSI 300", "the breakout underperformed CSI 300"], ["excess return was +2.90%", "excess return was +1.00%"], ["0.10% times 20"]],
+        "fixture_answer": "Insufficient evidence for relative performance: the event H20 cumulative return was +3.00% [e1]; CSI 300's mean daily return was +0.10% [e2]. These figures are not directly comparable; a benchmark H20 return aligned to the event windows is missing."
+      }
+    },
+    {
+      "id": "matched_horizon_aligned_comparisons",
+      "slice": "comparison_boundaries",
+      "user_request": "Report the observed matched low-volatility H20 comparison and the event-window benchmark comparison.",
+      "evidence": [
+        {"id": "e1", "text": "2021-01-01 to 2026-09-30 observational study: volume-confirmed low-volatility breakout events were matched to low-volatility plain-breakout controls by event date, sector and pre-event volatility. All stock returns use adjusted-close entry and gross H20 cumulative returns, with identical weighting. Matched treatment/control means were +3.00%/+1.00%; the reported mean difference was +2.00 percentage points. CSI 300 gross H20 returns aligned to the treatment event windows averaged +2.00%, with a reported treatment-minus-benchmark mean of +1.00 percentage point. This observational matching design does not establish causality."}
+      ],
+      "expected": {
+        "status": "success",
+        "evidence_ids": ["e1"],
+        "required_content": [["matched"], ["low-volatility"], ["H20"], ["+2.00 percentage points"], ["+1.00 percentage point"], ["observational"], ["not establish causality"]],
+        "forbidden_content": [["proves a causal benefit", "volume confirmation causes"]],
+        "fixture_answer": "The matched low-volatility H20 comparison reported an observed +2.00 percentage points treatment/control difference and +1.00 percentage point versus the aligned CSI 300 event-window H20 returns [e1]. This observational comparison does not establish causality."
+      }
     }
   ]
 }
