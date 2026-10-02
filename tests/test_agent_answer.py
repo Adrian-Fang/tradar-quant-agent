@@ -211,6 +211,26 @@ class AnswerSynthesisTests(unittest.TestCase):
                 self.assertEqual(row["required_content_coverage"], 1.0)
                 self.assertGreater(row["forbidden_content_violations"], 0)
 
+    def test_synthesis_limitations_require_evidence_not_generic_caveats(self):
+        case = next(case for case in CASES if case["id"] == "event_study_evidenced_limitations_only")
+        client = FakeClient(output=response(answer=case["expected"]["fixture_answer"]))
+        result = synthesize_answer(case["user_request"], case["evidence"], client=client)
+        prompt = client.calls[0]["instructions"]
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("Limitation claims require evidence too", prompt)
+        self.assertIn("A missing field does not establish", prompt)
+        self.assertEqual(json.loads(client.calls[0]["input"])["evidence"], case["evidence"])
+        outcome = run_case(case, client=FixtureClient(case), model="fixture")
+        self.assertTrue(score_case(case, outcome, 1)["case_pass"])
+        for caveat in ("Transaction costs were ignored.", "The result suffers from survivorship bias."):
+            with self.subTest(caveat=caveat):
+                bad = {**outcome["parsed"], "answer": outcome["parsed"]["answer"] + " " + caveat}
+                row = score_case(case, run_case(case, client=FakeClient(output=bad), model="fixture"), 1)
+                self.assertFalse(row["case_pass"])
+                self.assertGreater(row["forbidden_content_violations"], 0)
+        documented = next(case for case in CASES if case["id"] == "event_study_documented_cost_limitation")
+        self.assertTrue(score_case(documented, run_case(documented, client=FixtureClient(documented), model="fixture"), 1)["case_pass"])
+
     def test_matched_horizon_aligned_observed_comparisons_remain_allowed(self):
         case = next(case for case in CASES if case["id"] == "matched_horizon_aligned_comparisons")
         outcome = run_case(case, client=FixtureClient(case), model="fixture")

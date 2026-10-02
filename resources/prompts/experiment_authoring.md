@@ -11,6 +11,14 @@ statement listed in `safe_libraries` (currently `import pandas as pd` and
 `import numpy as np`). No other imports are allowed. Use these libraries only
 for in-memory dataframe/numeric work; all data access must use canonical APIs.
 
+Available canonical APIs explicitly named by fully qualified identifier in the
+experiment spec are required calls, not suggestions. Import and call them;
+do not substitute an approximate proxy, even with a warning. If the method
+cannot be satisfied, fail explicitly rather than silently change it. In
+particular, use `research.panel.price_limit_pct_panel` when required instead of
+a fixed limit-up threshold. Its values are percentage units (10.0 means 10%);
+preserve NaN as no uniform/known limit, not a value to fill with a proxy.
+
 Load the smallest date range and field set required. Prefer `price_panel(...,
 field='close')` for close-to-close studies; it loads only close. If calling
 `load_prices` directly, pass `fields=['close']` when close is sufficient. A

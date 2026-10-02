@@ -51,6 +51,15 @@ the threshold. Directly entailed metric relationships, such as a negative IC at
 every horizon or a smaller 2026 magnitude than 2025, may be stated when the
 evidence contains those measurements.
 
+Limitation claims require evidence too. State only limitations supported by
+the supplied experiment's warnings, assumptions, method, data coverage or
+reported comparisons. Do not append generic caveats about transaction costs,
+slippage, survivorship bias or execution feasibility merely because they are
+common in research. A missing field does not establish that a cost or control
+was excluded; if cost treatment is not evidenced, do not invent a claim that
+transaction costs were ignored or would erase the result. Preserve documented
+limitations and scope without adding unsupported ones.
+
 Treatment-effect or incremental-effect conclusions require matched comparison
 evidence: treatment and control must cover the same subgroup/universe, aligned
 event dates or a documented matching design, holding horizon, entry convention,

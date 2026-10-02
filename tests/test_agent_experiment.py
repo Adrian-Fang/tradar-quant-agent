@@ -313,12 +313,12 @@ class ExperimentArchitectureTests(unittest.TestCase):
         self.assertEqual(authored["status"], "ok")
         self.assertEqual(payload["experiment_spec"], spec())
         self.assertEqual(payload["capability_manifest"], CAPABILITY_MANIFEST)
-        self.assertEqual(payload["capability_manifest"]["version"], "1.5.2")
+        self.assertEqual(payload["capability_manifest"]["version"], "1.5.3")
         self.assertEqual(payload["execution_budget"]["process_memory_bytes"], experiment_module.MEMORY_BYTES)
         self.assertEqual(payload["execution_budget"]["duckdb_threads"], 1)
         self.assertLess(payload["execution_budget"]["duckdb_memory_bytes"], payload["execution_budget"]["process_memory_bytes"])
         self.assertEqual(set(payload["capability_manifest"]["authoring_constraints"]), {
-            "data_loading", "panel_lifetime", "tradability", "failure_handling",
+            "data_loading", "panel_lifetime", "tradability", "failure_handling", "canonical_capabilities",
         })
         schema = payload["capability_manifest"]["result_schema"]
         self.assertEqual(set(schema["required"]), set(schema["properties"]))
@@ -408,6 +408,71 @@ class ExperimentArchitectureTests(unittest.TestCase):
         authored = author_experiment("request", spec(), client=Client({"program": program}))
 
         self.assertEqual(authored["status"], "ok")
+
+    def test_spec_required_canonical_calls_cannot_be_replaced_by_proxies(self):
+        for module, name in (("research.panel", "price_limit_pct_panel"), ("utils.loader", "load_index")):
+            with self.subTest(api=name):
+                required_spec = {**spec(), "method": f"Use `{module}.{name}` for the requested method."}
+                for prefix in ("", f"from {module} import {name}\n", f"# {name}()\n"):
+                    fallback = author_experiment("request", required_spec, client=Client({"program": prefix + PROGRAM}))
+                    self.assertEqual(fallback["error_type"], "invalid_experiment_source")
+                    self.assertIn(f"must call spec-required canonical APIs: {module}.{name}", fallback["error"])
+                    self.assertIsNone(fallback["program"])
+                call_args = "'2025-01-01', '2025-01-02'" if name == "price_limit_pct_panel" else "'000300', '2025-01-01', '2025-01-02'"
+                program = f"from {module} import {name} as canonical\n" + PROGRAM.replace(
+                    "def run():", f"def run():\n    canonical({call_args})"
+                )
+                accepted = author_experiment("request", required_spec, client=Client({"program": program}))
+                self.assertEqual(accepted["status"], "ok", accepted)
+                chinese_spec = {**required_spec, "method": f"必须使用{module}.{name}计算"}
+                rejected = author_experiment("request", chinese_spec, client=Client({"program": PROGRAM}))
+                self.assertEqual(rejected["error_type"], "invalid_experiment_source")
+                self.assertIn(f"{module}.{name}", rejected["error"])
+        payload = experiment_module.build_authoring_payload("request", required_spec)
+        self.assertIn("do not substitute an approximate proxy", payload["instructions"])
+        self.assertIn("required calls, not suggestions", CAPABILITY_MANIFEST["authoring_constraints"]["canonical_capabilities"])
+
+    @_requires_sandbox
+    def test_authored_price_limit_panel_uses_canonical_board_rules_and_nan(self):
+        required_spec = {**spec(), "method": "Use research.panel.price_limit_pct_panel for daily thresholds."}
+        program = (
+            "from research.panel import price_limit_pct_panel as canonical_limits\n"
+            "def run():\n"
+            "    limits = canonical_limits('2025-01-02', '2025-01-02')\n"
+            "    return {'assumptions': [], 'method': {'type': 'canonical_price_limits'}, "
+            "'data_coverage': {'actual_start': '2025-01-02', 'actual_end': '2025-01-02'}, "
+            "'metrics': {'limits': limits.iloc[0].to_dict()}, "
+            "'sample_counts': {'known_limits': int(limits.notna().sum().sum())}, "
+            "'warnings': ['NaN limits are not replaced by a fixed proxy']}\n"
+        )
+        api = next(item for item in CAPABILITY_MANIFEST["apis"] if item["name"] == "price_limit_pct_panel")
+        self.assertEqual(api["signature"], "price_limit_pct_panel(start, end)")
+        self.assertIn("10.0 means 10%", api["returns"])
+        self.assertIn("NaN", api["notes"])
+        authored = author_experiment("local fixture", required_spec, client=Client({"program": program}))
+        self.assertEqual(authored["status"], "ok", authored)
+        with tempfile.TemporaryDirectory() as directory:
+            connection = duckdb.connect(str(Path(directory) / "tradar.duckdb"))
+            connection.execute("CREATE TABLE history(date DATE)")
+            connection.execute("INSERT INTO history VALUES ('2025-01-02')")
+            connection.execute("CREATE TABLE universe(symbol VARCHAR, list_date DATE, exchange VARCHAR)")
+            connection.execute("""INSERT INTO universe VALUES
+                ('600001','2000-01-01','SH'),('600002','2000-01-01','SH'),
+                ('300001','2000-01-01','SZ'),('688001','2000-01-01','SH'),
+                ('800001','2000-01-01','BJ'),('600003','2025-01-02','SH'),
+                ('000001','2000-01-01','SZ')""")
+            connection.execute("""CREATE TABLE hist_ext AS SELECT symbol, DATE '2025-01-02' date,
+                symbol='600002' is_st, symbol!='000001' is_trading FROM universe""")
+            connection.close()
+            with patch.dict(os.environ, {"DATA_PATH": directory}):
+                result = run_research_experiment(required_spec, authored_program=authored["program"],
+                                                authoring_provenance=authored["provenance"])
+        self.assertEqual(result.status, "success", result.errors)
+        self.assertEqual(result.result["metrics"]["limits"], {
+            "600001": 10.0, "600002": 5.0, "300001": 20.0, "688001": 20.0,
+            "800001": 30.0, "600003": None, "000001": None,
+        })
+        self.assertEqual(result.result["sample_counts"]["known_limits"], 5)
 
     @_requires_sandbox
     def test_execution_returns_validated_result_and_provenance(self):

@@ -1,10 +1,11 @@
 {
-  "version": "1.5.2",
+  "version": "1.5.3",
   "authoring_constraints": {
     "data_loading": "Load only method-required fields, not an OHLCV bundle by habit (close/open/volume do not require unused high/low), and the requested date range plus necessary lookback/exit padding. Preserve canonical price_panel backward adjustment unless the spec requires another basis; never change adjustment or shorten the window to fit a budget.",
     "panel_lifetime": "Reuse each input panel. Release unused wide intermediates before loading or building another panel; compute, aggregate, and release one forward-return horizon at a time, including its yearly diagnostics. Do not retain a dictionary/list of full-market panels for every horizon or all masked group copies simultaneously.",
     "tradability": "Load only the canonical masks actually consumed by the method; a close-entry event study need not load an unused sell/open panel.",
-    "failure_handling": "Do not swallow data-loading or resource failures and return empty metrics as a completed experiment. Let the executor report a structured failure."
+    "failure_handling": "Do not swallow data-loading or resource failures and return empty metrics as a completed experiment. Let the executor report a structured failure.",
+    "canonical_capabilities": "Available canonical APIs explicitly named by fully qualified identifier in the experiment spec are required calls, not suggestions. Do not replace them with approximate proxies, even if the substitution is disclosed in assumptions or warnings. If the specified method cannot be implemented, fail explicitly rather than silently change it."
   },
   "execution_policy": {
     "access": "read_only_research",
@@ -116,6 +117,13 @@
       "signature": "is_trading_mask(start, end)",
       "returns": "Boolean date by symbol DataFrame",
       "notes": "trading-status mask only"
+    },
+    {
+      "module": "research.panel",
+      "name": "price_limit_pct_panel",
+      "signature": "price_limit_pct_panel(start, end)",
+      "returns": "Float date by symbol DataFrame of daily price-limit percentages: 10.0 means 10%, not 0.10",
+      "notes": "Canonical board/ST/listing-date/historical-rule limits (5/10/20/30 percent where applicable). NaN means no uniform limit or insufficient information, including non-trading days and applicable IPO exceptions; do not fill it with a fixed proxy. This supplies thresholds, not a limit-hit event mask; align dates/symbols and units with the observed daily change before comparison."
     },
     {
       "module": "research.panel",

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import resource
 import shutil
 import signal
@@ -371,7 +372,7 @@ def _persist_program(program: str, source_sha256: str) -> None:
         os.close(directory_fd)
 
 
-def _validate_program_source(program: Any) -> str | None:
+def _validate_program_source(program: Any, spec: Mapping[str, Any] | None = None) -> str | None:
     if not isinstance(program, str) or not program.strip():
         return "authoring program must be a non-empty string"
     if len(program) > MAX_PROGRAM_CHARS:
@@ -422,6 +423,25 @@ def _validate_program_source(program: Any) -> str | None:
         return "authoring program contains disallowed imports: " + "; ".join(
             sorted(set(disallowed_imports))
         )
+    if spec is not None:
+        # Exact manifest identifiers in a spec denote required capabilities;
+        # do not infer requirements from natural-language intent or thresholds.
+        required = set(re.findall(
+            r"\b(?:[A-Za-z_]\w*\.)+[A-Za-z_]\w*\b",
+            json.dumps(spec, ensure_ascii=False), flags=re.ASCII,
+        )) & {f"{module}.{name}" for module, name in _ALLOWED_IMPORTS}
+        calls = {
+            node.func.id for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        used = {
+            f"{node.module}.{name.name}"
+            for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+            for name in node.names if (name.asname or name.name) in calls
+        }
+        missing = sorted(required - used)
+        if missing:
+            return "authoring program must call spec-required canonical APIs: " + ", ".join(missing)
     return None
 
 
@@ -544,7 +564,7 @@ def author_experiment(
         error = error or "authoring response must contain exactly program"
     source_error = None
     if error is None:
-        source_error = _validate_program_source(authored["program"])
+        source_error = _validate_program_source(authored["program"], normalized_spec)
         error = source_error
     if error:
         return {
@@ -833,7 +853,7 @@ def run_research_experiment(
         },
     })
     provenance_error = (
-        _validate_program_source(authored_program)
+        _validate_program_source(authored_program, normalized_spec)
         if authored_program is not None
         else "authored program is required"
     )

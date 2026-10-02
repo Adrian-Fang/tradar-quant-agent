@@ -192,6 +192,36 @@
       }
     },
     {
+      "id": "event_study_evidenced_limitations_only",
+      "slice": "limitation_boundaries",
+      "user_request": "Summarize the limit-up event study and its limitations.",
+      "evidence": [
+        {"id": "e1", "text": "Executed event study using canonical board-specific price limits, 2021-01-01 to 2026-09-30: H5 mean return +0.40%, H20 mean return -0.20%, 800 events. Reported warning: late-window H20 outcomes are censored because exit prices are unavailable. The supplied result does not specify transaction-cost treatment."}
+      ],
+      "expected": {
+        "status": "success",
+        "evidence_ids": ["e1"],
+        "required_content": [["+0.40%"], ["-0.20%"], ["800"], ["censored"]],
+        "forbidden_content": [["transaction costs were ignored", "transaction costs were excluded", "costs would erase", "not account for transaction costs"], ["survivorship bias", "slippage was ignored"]],
+        "fixture_answer": "The canonical price-limit event study reported H5 +0.40% and H20 -0.20% across 800 events [e1]. The documented limitation is censored late-window H20 outcomes where exit prices are unavailable."
+      }
+    },
+    {
+      "id": "event_study_documented_cost_limitation",
+      "slice": "limitation_boundaries",
+      "user_request": "Summarize the event return and documented cost limitation.",
+      "evidence": [
+        {"id": "e1", "text": "Executed event study: gross H20 mean return +0.20%. The method and warnings explicitly state that transaction costs and slippage were not modeled; net strategy performance was not evaluated."}
+      ],
+      "expected": {
+        "status": "success",
+        "evidence_ids": ["e1"],
+        "required_content": [["gross"], ["+0.20%"], ["transaction costs"], ["slippage"], ["not modeled"]],
+        "forbidden_content": [["costs would erase", "net return was"]],
+        "fixture_answer": "The gross H20 mean return was +0.20% [e1]. Transaction costs and slippage were explicitly not modeled, so the study did not evaluate net strategy performance."
+      }
+    },
+    {
       "id": "matched_horizon_aligned_comparisons",
       "slice": "comparison_boundaries",
       "user_request": "Report the observed matched low-volatility H20 comparison and the event-window benchmark comparison.",
