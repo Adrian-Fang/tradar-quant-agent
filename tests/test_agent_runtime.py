@@ -301,12 +301,9 @@ class AgentRuntimeTests(unittest.TestCase):
     def test_legacy_retrieval_abstain_continues_new_research(self):
         planner, hitl, _, = self.clients()
         calls = []
-        with patch("agent.agent.retrieve_verified", return_value={
-            "status": "abstain",
-            "results": [],
-            "rejected": [],
-            "errors": [],
-        }) as retrieve, patch("agent.tools.executor.TOOL_FUNCTIONS", {"inspect_universe": tool(calls)}):
+        with patch("agent.agent.retrieve_semantic", return_value=[]) as retrieve, patch(
+            "agent.tools.executor.TOOL_FUNCTIONS", {"inspect_universe": tool(calls)}
+        ):
             result = run_agent(
                 "Use research records to answer this question.",
                 planner_client=planner,
@@ -360,9 +357,9 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(trace["latency_ms"]["qdrant_ms"], 2)
         self.assertGreaterEqual(trace["latency_ms"]["verification_ms"], 0)
         self.assertGreaterEqual(trace["latency_ms"]["runtime_total_ms"], 0)
-        self.assertEqual(result["observed"]["context"]["selected_ids"], ["request_scope", "RR-002", "RR-003"])
+        self.assertEqual(result["observed"]["context"]["selected_ids"], ["request_scope", "RR-002", "RR-001", "RR-003"])
         context_input = json.loads(planner.calls[0]["input"])["user_request"]
-        self.assertIn("planning_brief", context_input)
+        self.assertIn("related_research_context", context_input)
         self.assertNotIn("Public source", context_input)
         self.assertNotIn("Full method", context_input)
         self.assertLess(context_input.index("RR-002"), context_input.index("RR-003"))
@@ -372,14 +369,17 @@ class AgentRuntimeTests(unittest.TestCase):
             self.assertNotIn("score", record)
             self.assertNotIn("matched_chunks", record)
         self.assertIn("untrusted data", verifier.calls[0]["instructions"])
-        self.assertEqual([call["stage"] for call in result["telemetry"]["calls"]], ["retrieval_verifier", "planning", "synthesis", "grounding"])
+        self.assertEqual([call["stage"] for call in result["telemetry"]["calls"]], ["planning", "retrieval_verifier", "synthesis", "grounding"])
+        self.assertEqual(trace["verified_ids"], ["RR-002", "RR-003"])
+        self.assertEqual(trace["related_research_ids"], ["RR-002", "RR-001", "RR-003"])
+        self.assertEqual(trace["verification_status"], "ok")
 
-    def test_qdrant_abstain_empty_or_unsupported_continues_new_research(self):
+    def test_qdrant_empty_or_related_candidates_continue_without_verifier(self):
         for records in ([], [{"research_id": "RR-001", "text": "A different study."}]):
             with self.subTest(records=records):
                 retriever = Mock()
                 retriever.search.return_value = {"results": records}
-                verifier = Client({"supported": False, "reason": "unrelated"})
+                verifier = Client(error=RuntimeError("verifier must not gate research"))
                 planner, hitl, _ = self.clients()
                 calls = []
                 with patch("agent.tools.executor.TOOL_FUNCTIONS", {"inspect_universe": tool(calls)}):
@@ -388,12 +388,13 @@ class AgentRuntimeTests(unittest.TestCase):
                         retrieval_client=verifier, retrieval_backend="qdrant", knowledge_retriever=retriever,
                         evidence=[],
                     )
-                self.assertEqual(result["retrieval"]["status"], "abstain")
-                self.assertTrue(result["observed"]["retrieval"]["reason"])
+                self.assertEqual(result["retrieval"]["candidate_status"], "ok" if records else "abstain")
+                self.assertEqual(result["retrieval"]["verification_status"], "not_used")
+                self.assertEqual(result["observed"]["retrieval"]["research_ids"], [])
                 self.assertEqual(result["observed"]["outcome"]["status"], "success")
                 self.assertEqual(result["research_run"].status, "completed")
                 self.assertEqual(len(calls), 1)
-                self.assertEqual(len(verifier.calls), len(records))
+                self.assertEqual(verifier.calls, [])
                 self.assertIsNone(result["telemetry"]["summary"]["failure_stage"])
 
     def test_qdrant_infrastructure_failure_is_explicit_without_fallback(self):
@@ -402,7 +403,7 @@ class AgentRuntimeTests(unittest.TestCase):
                 retriever = Mock()
                 retriever.search.side_effect = RuntimeError(error)
                 planner, verifier = Client(plan("no_action")), Client()
-                with patch("agent.agent.retrieve_verified") as legacy:
+                with patch("agent.agent.retrieve_semantic") as legacy:
                     result = run_agent("Research a factor.", planner_client=planner, retrieval_client=verifier,
                                        retrieval_backend="qdrant", knowledge_retriever=retriever)
                 self.assertEqual(result["status"], "error")
@@ -431,7 +432,9 @@ class AgentRuntimeTests(unittest.TestCase):
                 self.assertEqual(result["error_type"], error_type)
                 self.assertEqual(result["error_stage"], "retrieval")
                 self.assertEqual(result["retrieval"]["errors"][0]["research_id"], "RR-001")
-                self.assertEqual(planner.calls, [])
+                self.assertEqual(len(planner.calls), 1)
+                self.assertEqual(result["retrieval"]["candidate_status"], "ok")
+                self.assertEqual(result["retrieval"]["verification_status"], "error")
 
     def test_qdrant_quarantines_injection_before_verification_and_planning(self):
         retriever = Mock()

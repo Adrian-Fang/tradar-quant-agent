@@ -49,13 +49,16 @@ Tradar 是一个量化研究、策略验证与生产信号平台，并正在逐�
 ```text
 Research Records
   → Semantic Retrieval Top-K
-  → Relevance Verification
+  → Safety quarantine / related-research planning briefs
   → Context Selection
-  → Compaction
   → Construction
+  → Planning
+      → ready: HITL / fresh research / ToolResult evidence
+      → needs_input: clarification
+      → historical no_action: Relevance Verification / verified knowledge evidence
 ```
 
-这条链路描述知识与 context 的处理边界；其中 context compactor 尚未接入 `agent/agent.py::run_agent`。
+Related context 仅用于 routing/method reuse，不是答案 evidence；verification 只在历史知识答案路径上运行，不是研究能力 gate。Capability no_action 使用 capability metadata。Context compactor 尚未接入 `agent/agent.py::run_agent`。
 
 Semantic similarity 只是 retrieval-stage signal，不等于 support。retrieval score 不应作为 verifier 输入；verifier 只判断 `query ↔ record` 是否有直接支持。
 

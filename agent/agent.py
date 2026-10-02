@@ -20,7 +20,8 @@ from .loop.runner import run_loop
 from .planning.planner import plan_request
 from .retrieval.hybrid_retriever import KnowledgeRetriever
 from .retrieval.qdrant_store import filter_spec
-from .retrieval.relevance_verifier import retrieve_verified, verify_candidates
+from .retrieval.relevance_verifier import verify_candidates
+from .retrieval.semantic_retriever import retrieve_semantic
 from .tools.experiment import author_experiment, run_research_experiment
 
 
@@ -219,10 +220,10 @@ def tool_results_to_evidence(tool_results: list[Any]) -> list[dict[str, str]]:
 
 
 def _knowledge_planning_brief(record: dict[str, Any]) -> dict[str, Any]:
-    """Decision-only excerpts; original verified records remain synthesis evidence."""
+    """Bounded related-research context for routing/method reuse, never answer evidence."""
     metadata, sections = record.get("metadata", {}), record.get("sections", {})
     brief = {
-        "context_type": "planning_brief", "research_id": record["research_id"],
+        "context_type": "related_research_context", "research_id": record["research_id"],
         "scope": {key: metadata.get(key) for key in ("date", "market", "status")},
         "truncated_fields": [],
     }
@@ -524,15 +525,12 @@ def run_agent(
     selected = select_context(items)["selected"]
     retrieval_result = None
     retrieval_trace = {"status": "not_used", "research_ids": []}
+    safe_candidates = []
 
     if retrieval_backend == "qdrant" or semantic_embedder is not None:
-        if retrieval_client is None:
-            raise ValueError("retrieval_client is required when retrieval is enabled")
-        verifier = TelemetryClient(
-            SafetyClient(retrieval_client), telemetry, stage="retrieval_verifier", model=model
-        )
         started = perf_counter()
-        details = {"backend": retrieval_backend}
+        details = {"backend": retrieval_backend, "candidate_ids": [], "quarantined_ids": [],
+                   "related_research_ids": [], "verified_ids": [], "verification_status": "not_used"}
         if retrieval_backend == "qdrant":
             details.update({"mode": retrieval_strategy, "filters": filters, "candidate_limit": candidate_limit})
         try:
@@ -541,31 +539,49 @@ def run_agent(
                 retriever = knowledge_retriever if knowledge_retriever is not None else KnowledgeRetriever()
                 search = retriever.search(user_request, mode=retrieval_strategy, limit=candidate_limit, **filters)
                 candidates = search["results"]
-                if not isinstance(candidates, list) or len(candidates) > candidate_limit:
-                    raise ValueError("retriever exceeded the record candidate limit or returned invalid results")
                 details.update({
-                    "candidate_ids": [record["research_id"] for record in candidates],
                     "latency_ms": dict(search.get("latency_ms", {})),
                     "chunks_returned": search.get("chunks_returned"),
-                    "quarantined_ids": [],
                 })
-                safe_candidates = []
-                for record in candidates:
-                    event = quarantine_untrusted_text(record["text"], source=f"retrieval:{record['research_id']}")
-                    if event["status"] == "quarantined":
-                        safety["events"].append(event)
-                        details["quarantined_ids"].append(record["research_id"])
-                    else:
-                        safe_candidates.append(record)
-                tick = perf_counter()
-                retrieval_result = verify_candidates(user_request, safe_candidates, client=verifier, model=model)
-                details["latency_ms"]["verification_ms"] = (perf_counter() - tick) * 1000
             else:
-                retrieval_result = retrieve_verified(
-                    user_request, client=verifier, model=model, candidate_limit=candidate_limit,
+                candidates = retrieve_semantic(
+                    user_request, limit=candidate_limit,
                     market=market, topic=topic, status=record_status,
                     embedder=semantic_embedder, prepared_corpus=prepared_corpus,
                 )
+            if not isinstance(candidates, list) or len(candidates) > candidate_limit:
+                raise ValueError("retriever exceeded the record candidate limit or returned invalid results")
+            if any(not isinstance(record, Mapping) or not isinstance(record.get("research_id"), str)
+                   or not record["research_id"].strip() or not isinstance(record.get("text"), str)
+                   for record in candidates):
+                raise ValueError("retrieval candidates require a non-empty research_id and full text string")
+            details["candidate_ids"] = [record["research_id"] for record in candidates]
+            if len(set(details["candidate_ids"])) != len(candidates):
+                raise ValueError("retrieval candidate research_ids must be unique")
+            for record in candidates:
+                # Check full raw content and projected fields before truncation/JSON escaping.
+                raw_values = [record["text"], record.get("title", ""), record.get("question", "")]
+                raw_values.extend(record.get("sections", {}).values())
+                raw_values.extend(record.get("metadata", {}).get(field) for field in ("date", "market", "status"))
+                event = quarantine_untrusted_text(
+                    "\n".join(value for value in raw_values if isinstance(value, str)),
+                    source=f"retrieval:{record['research_id']}",
+                )
+                if event["status"] == "quarantined":
+                    safety["events"].append(event)
+                    details["quarantined_ids"].append(record["research_id"])
+                    continue
+                candidate = dict(record)
+                candidate.pop("verification", None)  # A retriever cannot attest answer support.
+                brief = _knowledge_planning_brief(candidate)
+                safe_candidates.append(candidate)
+                items.append({"id": candidate["research_id"], "kind": "retrieved_knowledge",
+                              "text": json.dumps(brief, ensure_ascii=False, separators=(",", ":"))})
+            retrieval_result = {
+                "status": "ok" if safe_candidates else "abstain", "results": [],
+                "rejected": [], "errors": [],
+                "reason": "" if safe_candidates else "no safe retrieval candidates",
+            }
         except Exception as exc:
             retrieval_result = {
                 "status": "error", "results": [], "rejected": [],
@@ -573,6 +589,7 @@ def run_agent(
                 "reason": "retrieval failed closed",
             }
         details.setdefault("latency_ms", {})["runtime_total_ms"] = (perf_counter() - started) * 1000
+        details["candidate_status"] = retrieval_result["status"]
         retrieval_result.update(details)
         retrieval_trace = {
             "status": retrieval_result["status"],
@@ -603,27 +620,11 @@ def run_agent(
                 safety=safety,
                 telemetry=telemetry,
             )
-        # No historical support is not a verdict on whether new research is possible.
-        for result in retrieval_result["results"]:
-            brief = _knowledge_planning_brief(result)
-            item = {
-                "id": result["research_id"],
-                "kind": "retrieved_knowledge",
-                "text": json.dumps(brief, ensure_ascii=False, separators=(",", ":")),
-            }
-            # Quarantine full source and raw projected fields, never only escaped JSON
-            # or truncated excerpts; details beyond the brief still cross no trust boundary.
-            raw_values = [result["text"], result.get("title", ""), result.get("question", "")]
-            raw_values.extend(result.get("sections", {}).values())
-            raw_values.extend(result.get("metadata", {}).get(field) for field in brief["scope"])
-            event = quarantine_untrusted_text(
-                "\n".join(value for value in raw_values if isinstance(value, str)), source=f"retrieval:{item['id']}"
-            )
-            if event["status"] == "quarantined":
-                safety["events"].append(event)
-            else:
-                items.append(item)
         selected = select_context(items)["selected"]
+        selected_ids = {item["id"] for item in selected if item["kind"] == "retrieved_knowledge"}
+        safe_candidates = [record for record in safe_candidates if record["research_id"] in selected_ids]
+        related_ids = [record["research_id"] for record in safe_candidates]
+        retrieval_result["related_research_ids"] = retrieval_trace["related_research_ids"] = related_ids
 
     construction = construct_context(
         user_request,
@@ -663,11 +664,39 @@ def run_agent(
     plan = planned["plan"]
     planning = {"status": plan["status"], "steps": plan["steps"]}
     if plan["status"] != "ready":
-        if plan["status"] == "no_action" and retrieval_result and retrieval_result["status"] == "ok":
-            safe_ids = {item["id"] for item in selected if item["kind"] == "retrieved_knowledge"}
-            records = [record for record in retrieval_result["results"] if record["research_id"] in safe_ids]
+        if plan["status"] == "no_action" and not _is_capability_request(user_request) and safe_candidates:
+            tick = perf_counter()
             try:
-                knowledge_evidence = _knowledge_records_to_evidence(records)
+                if retrieval_client is None:
+                    raise ValueError("retrieval_client is required for knowledge-answer verification")
+                verified = verify_candidates(
+                    user_request, safe_candidates,
+                    client=TelemetryClient(SafetyClient(retrieval_client), telemetry, stage="retrieval_verifier", model=model),
+                    model=model,
+                )
+            except Exception as exc:
+                verified = {"status": "error", "results": [], "rejected": [],
+                            "errors": [{"error_type": "retrieval_error", "error": f"{type(exc).__name__}: {exc}"}],
+                            "reason": "verification failed closed"}
+            latency = retrieval_trace["latency_ms"]
+            latency["verification_ms"] = (perf_counter() - tick) * 1000
+            latency["runtime_total_ms"] += latency["verification_ms"]
+            verified_ids = [record["research_id"] for record in verified["results"]]
+            retrieval_result.update(verified)
+            retrieval_result.update(verification_status=verified["status"], verified_ids=verified_ids)
+            retrieval_trace.update({key: verified[key] for key in ("status", "reason", "rejected", "errors")})
+            retrieval_trace.update(verification_status=verified["status"], verified_ids=verified_ids, research_ids=verified_ids)
+            if verified["status"] == "error":
+                error = verified["errors"][0]
+                return _finish(
+                    context_ids=[item["id"] for item in selected], planning=planning, steps=[],
+                    retrieval=retrieval_trace, retrieval_result=retrieval_result,
+                    research_run=None, grounding=None, hitl=None, plan=plan,
+                    outcome="error", status="error", error_type=error["error_type"],
+                    error_stage="retrieval", error=error["error"], safety=safety, telemetry=telemetry,
+                )
+            try:
+                knowledge_evidence = _knowledge_records_to_evidence(verified["results"])
             except ValueError as exc:
                 return _finish(
                     context_ids=[item["id"] for item in selected], planning=planning, steps=[],

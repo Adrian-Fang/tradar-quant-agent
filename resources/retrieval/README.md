@@ -216,27 +216,43 @@ hybrid retrieval. The standalone backend's hybrid default, comparison eval and
 index profile remain unchanged; selecting a runtime strategy needs no rebuild.
 
 Dense (or explicit hybrid) retrieval -> canonical full-record hydration -> safety quarantine ->
-`verify_candidates()` -> compact planning briefs. Accepted records retain
-retrieved order (fused order for hybrid), without scores in verifier inputs or planner context. Historical
-knowledge abstention (no candidates or no direct support) **continues planning
-and new research**; it never terminates the run by itself. Infrastructure/stale
-index errors and verifier errors stop explicitly at `error_stage="retrieval"`,
-not as successful abstention. The retrieval result and observed trace retain
-status/reason, accepted/rejected/candidate IDs, explicit filters, quarantine
-events and backend/verification latency splits, including on subsequent planning
-failure. Provider verification remains under `retrieval_verifier` telemetry;
-backend timings are not fabricated provider calls or token usage.
+compact related-research context -> **planning first**. `ready` executes research
+through HITL without relevance verification; `needs_input` clarifies immediately.
+Capability `no_action` uses capability metadata. Non-capability `no_action` with
+safe candidates enters `verify_candidates()` -> supported evidence -> synthesis/grounding.
+Empty/generic no-action paths with no safe candidates finish without a verifier call.
+The unchanged planner contract has no separate knowledge-intent field: non-capability
+`no_action` with safe candidates is treated as a historical-answer attempt, not
+inferred from language triggers or freeform `reason` text.
+
+Both Qdrant and legacy `retrieve_semantic()` retain candidate order; standalone
+`retrieve_verified()` remains available for retrieval eval/callers, but runtime
+does not use its combined pre-planning gate. Empty or unsupported history never
+prevents fresh planning/research. Unsupported knowledge candidates produce controlled
+no-action/no-evidence. Infrastructure/stale index errors stop before planning at
+`error_stage="retrieval"`; verifier errors fail closed at that same stage only
+on the knowledge-answer route, with planning preserved.
+Trace separates `candidate_status`/`candidate_ids`/`related_research_ids` from
+`verification_status` (`not_used|ok|abstain|error`)/`verified_ids`; existing
+`research_ids` contains verified IDs only. Overall retrieval status reflects the
+last attempted retrieval/verification stage. Filters, quarantine, rejected/error
+details and backend latency survive later failures; `verification_ms` appears
+only when verification runs. `runtime_total_ms` sums retrieval/quarantine and
+verification time, excluding intervening planning. `retrieval_verifier` provider
+telemetry appears after planning only on that route; backend timing is not a model call.
 
 Planning receives only identity/title, date/market/status, question (240 chars),
 method (160), conclusion (200), caveats (160), and explicit `truncated_fields`;
 title is capped at 100 chars and scope strings at 80. Findings, source paths/hashes, provenance prose,
 verification reasons and retrieval diagnostics are omitted from planning.
 Full raw source and projected fields are quarantined before planning, including
-text beyond excerpt bounds. Original verified records remain available for
-bounded synthesis/grounding evidence; briefs never replace factual evidence.
+text beyond excerpt bounds. Brief payloads explicitly identify
+`context_type: related_research_context`, remaining selectable as `retrieved_knowledge`.
+Full safe candidates stay separate locally until verification; public `results`
+contains verified records only. Briefs never replace factual evidence.
 
-Historical context is not fresh quantitative evidence. If verification succeeds
-and the initial planner returns `no_action`, selected, non-quarantined verified
+Historical context is not fresh quantitative evidence. After the initial planner
+returns historical `no_action`, verification must succeed before supported
 records may answer a historical question through the **same synthesis and
 grounding contracts** as executed research. No ResearchRun, HITL or executor is
 created on this knowledge-only route. Verification is relevance, not proof of

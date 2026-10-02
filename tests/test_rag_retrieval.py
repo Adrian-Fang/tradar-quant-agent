@@ -161,7 +161,7 @@ def test_hydrated_qdrant_records_reach_agent_context_without_live_services(backe
     planner_input = json.loads(planner.create.call_args.args[0]["input"])["user_request"]
     context = json.loads(planner_input.split("\n\nContext:\n", 1)[1])
     brief = json.loads(context[1]["text"])
-    assert brief["context_type"] == "planning_brief"
+    assert brief["context_type"] == "related_research_context"
     assert brief["question"] == record["question"][:240]
     assert brief["conclusion"] == record["sections"]["Conclusion"][:200]
     assert "provenance" not in context[1] and "# Provenance" not in context[1]["text"]

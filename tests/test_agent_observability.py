@@ -180,10 +180,6 @@ class ObservabilityTests(unittest.TestCase):
             }],
         }, usage)
 
-        def fake_retrieve(query, *, client, model, **kwargs):
-            client.create({"model": model, "instructions": "verify", "input": query})
-            return {"status": "ok", "results": [], "rejected": [], "errors": []}
-
         def inspect(*, run_id, **arguments):
             return ToolResult(
                 tool_name="inspect_universe",
@@ -192,7 +188,7 @@ class ObservabilityTests(unittest.TestCase):
                 result={"count": 12},
             )
 
-        with patch("agent.agent.retrieve_verified", side_effect=fake_retrieve), patch(
+        with patch("agent.agent.retrieve_semantic", return_value=[]), patch(
             "agent.tools.executor.TOOL_FUNCTIONS", {"inspect_universe": inspect}
         ):
             result = run_agent(
@@ -206,19 +202,19 @@ class ObservabilityTests(unittest.TestCase):
             )
 
         telemetry = result["telemetry"]
-        self.assertEqual(telemetry["summary"]["calls"], 6)
+        self.assertEqual(telemetry["summary"]["calls"], 5)
         self.assertEqual(
             {call["stage"] for call in telemetry["calls"]},
-            {"planning", "retrieval_verifier", "hitl", "synthesis", "grounding"},
+            {"planning", "hitl", "synthesis", "grounding"},
         )
-        self.assertEqual(telemetry["summary"]["input_tokens"], 60)
-        self.assertEqual(telemetry["summary"]["output_tokens"], 24)
-        self.assertEqual(telemetry["summary"]["cached_tokens"], 12)
-        self.assertEqual(telemetry["summary"]["reasoning_tokens"], 6)
+        self.assertEqual(telemetry["summary"]["input_tokens"], 50)
+        self.assertEqual(telemetry["summary"]["output_tokens"], 20)
+        self.assertEqual(telemetry["summary"]["cached_tokens"], 10)
+        self.assertEqual(telemetry["summary"]["reasoning_tokens"], 5)
         self.assertIsNone(telemetry["summary"]["estimated_cost"])
         self.assertIsNone(telemetry["summary"]["failure_stage"])
         self.assertEqual(set(telemetry["summary"]["per_stage"]), {
-            "planning", "retrieval_verifier", "hitl", "synthesis", "grounding",
+            "planning", "hitl", "synthesis", "grounding",
         })
 
     def test_provider_failure_is_recorded_with_failure_stage(self):
@@ -238,9 +234,7 @@ class ObservabilityTests(unittest.TestCase):
         self.assertIsNone(no_action["telemetry"]["summary"]["failure_stage"])
         self.assertEqual(no_action["telemetry"]["summary"]["terminal_stage"], "planning")
 
-        with patch("agent.agent.retrieve_verified", return_value={
-            "status": "abstain", "results": [], "rejected": [], "errors": [],
-        }):
+        with patch("agent.agent.retrieve_semantic", return_value=[]):
             abstain = run_agent(
                 "Find a matching record.",
                 planner_client=Client({"status": "no_action", "steps": [], "reason": "fixture"}),

@@ -32,12 +32,15 @@ provide it.”).
 
 Use `no_action` when the request does not need or is not appropriate for the
 available research tools. Its `steps` must be empty.
-When verified historical research records in context already support the core
-question and no fresh computation is requested, use `no_action`: the runtime
-will synthesize and ground a knowledge-only answer from those records. Relevance
-is not proof of complete coverage; consider the records' dates, scope and caveats.
-Retrieved `planning_brief` excerpts guide routing, not answers. Never infer
-omitted details (`truncated_fields` marks shortened fields); synthesis/grounding uses full records.
+Retrieved `related_research_context` excerpts are unverified, planner-only routing
+and method-reuse context, NOT answer evidence. Historically adjacent records may
+help plan research without supporting its requested conclusion. When the question
+asks about recorded historical research and no fresh computation is needed, use
+`no_action`: the runtime will then verify full candidate records for this question.
+Only supported records may become cited synthesis/grounding evidence; verification
+errors fail closed and no supported records means no knowledge answer. Capability
+or generic no-action requests require no research. Never infer omitted details
+(`truncated_fields` marks shortened fields); consider dates, scope and caveats.
 If the user requests a new experiment, updated dates or a result not established
 by the records, plan fresh research instead. Lack of historical support does not
 make an otherwise executable research request `no_action`.
