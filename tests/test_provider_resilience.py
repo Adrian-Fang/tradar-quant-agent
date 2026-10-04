@@ -49,6 +49,33 @@ def adapter(sdk, **options):
     return DeepSeekChatClient(api_key="test-key", sdk_client=sdk, **options)
 
 
+def test_deepseek_auto_choice_preserves_native_tool_conversation():
+    sdk = SDK(GOOD)
+    conversation = [
+        {"role": "user", "content": "Inspect."},
+        {"type": "function_call", "call_id": "call-1", "name": "inspect_universe", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "call-1", "output": '{"count":12}'},
+    ]
+    adapter(sdk).create({**PAYLOAD, "input": conversation, "tool_choice": "auto", "tools": [{
+        "type": "function", "name": "inspect_universe", "description": "Inspect.", "parameters": {"type": "object"},
+    }]})
+    request = sdk.calls[0]
+    assert request["tool_choice"] == "auto" and request["parallel_tool_calls"] is False
+    assert request["messages"][1] == {"role": "user", "content": "Inspect."}
+    assert request["messages"][2]["tool_calls"][0]["id"] == "call-1"
+    assert request["messages"][3] == {"role": "tool", "tool_call_id": "call-1", "content": '{"count":12}'}
+
+
+def test_openai_keeps_native_input_and_auto_choice():
+    sdk = SDK({"output_text": "42"})
+    conversation = [{"role": "user", "content": "17+25?"}]
+    result = OpenAIResponsesClient(api_key="test-key", sdk_client=sdk).create({
+        **PAYLOAD, "input": conversation, "tool_choice": "auto", "tools": [],
+    })
+    assert sdk.calls[0]["input"] == conversation and sdk.calls[0]["tool_choice"] == "auto"
+    assert result["output_text"] == "42"
+
+
 def timeout():
     return APITimeoutError(request=httpx.Request("POST", "https://fixture.invalid"))
 

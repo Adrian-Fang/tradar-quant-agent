@@ -1,4 +1,4 @@
-"""Minimal integrated runtime for one research request."""
+"""Model-first Agent: safety, native tool loop, then evidence-backed answers."""
 
 from __future__ import annotations
 
@@ -8,70 +8,78 @@ from time import perf_counter
 from typing import Any
 
 from .answer.synthesizer import synthesize_answer
-from .context.builder import construct_context
-from .context.selector import select_context
 from .core.contracts import ResearchRun, ToolResult
+from .core.providers import provider_error_type
+from .core.resources import load_json, load_prompt
 from .core.safety import SafetyClient, check_request_safety, quarantine_untrusted_text
 from .core.telemetry import RunTelemetry, TelemetryClient
-from .core.resources import load_json
 from .grounding.verifier import verify_answer_grounding
 from .hitl.gate import gate_action
-from .loop.runner import run_loop
-from .planning.planner import plan_request
-from .preflight import run_preflight
 from .retrieval.hybrid_retriever import KnowledgeRetriever
 from .retrieval.qdrant_store import filter_spec
 from .retrieval.relevance_verifier import verify_candidates
 from .retrieval.semantic_retriever import retrieve_semantic
+from .tools.calling import TOOL_SCHEMAS, _extract_function_calls
+from .tools.executor import execute_steps
 from .tools.experiment import author_experiment, run_research_experiment
 
-
 CAPABILITY_ITEMS = load_json("capabilities.json")
-_CAPABILITY_MARKERS = (
-    "你能做什么",
-    "你有哪些数据",
-    "支持哪些研究",
-    "可以评估哪些 factor",
-    "可以评估哪些因子",
-    "数据覆盖",
-    "数据质量",
-    "有什么限制",
-    "what can you do",
-    "what data",
-    "data quality",
-    "what are your limitations",
+PROMPT = load_prompt("prompts/agent.md")
+UTILITY_SCHEMAS = (
+    {"type": "function", "name": "request_clarification",
+     "description": "Ask the minimum question needed when research intent is materially incomplete.",
+     "parameters": {"type": "object", "properties": {"question": {"type": "string"}},
+                    "required": ["question"], "additionalProperties": False}, "strict": True},
+    {"type": "function", "name": "search_knowledge",
+     "description": "Find canonical historical research. Returns related context, NOT verified answer evidence. Use for historical questions or method reuse; not for generic chat.",
+     "parameters": {"type": "object", "properties": {"query": {"type": "string"}},
+                    "required": ["query"], "additionalProperties": False}, "strict": True},
+    {"type": "function", "name": "lookup_history",
+     "description": "Read older conversation messages when the recent history is insufficient.",
+     "parameters": {"type": "object", "properties": {}, "additionalProperties": False}, "strict": True},
 )
 
 
-def _is_capability_request(user_request: str) -> bool:
-    text = user_request.casefold()
-    return any(marker.casefold() in text for marker in _CAPABILITY_MARKERS)
+def _recent_history(history: list[dict[str, str]]) -> list[dict[str, str]]:
+    recent, remaining = [], 2000
+    for message in reversed(history[-4:]):
+        if remaining == 0:
+            break
+        content = message["content"][-remaining:]
+        recent.append({"role": message["role"], "content": content})
+        remaining -= len(content)
+    return list(reversed(recent))
 
 
-def _clarification_answer(reason: Any) -> str:
-    if isinstance(reason, str) and reason.strip():
-        return reason.strip()
-    return "请补充完成这项研究所需的最少信息。"
-
-
-def _capability_answer() -> tuple[str, list[dict[str, str]], dict[str, Any]]:
-    evidence = [{"id": item["id"], "text": item["text"]} for item in CAPABILITY_ITEMS]
-    answer = "当前能力与边界：\n" + "\n".join(
-        f"- {item['text']}" for item in evidence
-    )
-    grounding = {
-        "answer": answer,
-        "claims": [
-            {
-                "claim": item["text"],
-                "evidence_ids": [item["id"]],
-                "grounding": "supported",
-            }
-            for item in evidence
-        ],
-        "fully_grounded": True,
-    }
-    return answer, evidence, grounding
+def _execute_experiment(user_request, spec, run_id, client, telemetry, model):
+    """Keep authoring/isolated execution and the existing one-repair contract."""
+    if client is None:
+        return ToolResult.error("run_research_experiment", {"spec": spec},
+                                "experiment_authoring_unavailable", "experiment_authoring_client is required",
+                                run_id=run_id)
+    authoring_client = TelemetryClient(SafetyClient(client), telemetry, stage="experiment_authoring", model=model)
+    feedback = None
+    for attempt in range(2):
+        authored = author_experiment(user_request, spec, client=authoring_client, model=model,
+                                     repair_feedback=feedback)
+        if authored["status"] == "error":
+            if attempt == 0 and authored["error_type"] in {"invalid_experiment_source", "malformed_response"}:
+                feedback = f"Source validation failed: {authored['error']}"
+                continue
+            return ToolResult.error("run_research_experiment", {"spec": spec}, authored["error_type"],
+                                    authored["error"], run_id=run_id,
+                                    provenance={"module": "agent.tools.experiment"})
+        result = run_research_experiment(spec, authored_program=authored["program"],
+                                        authoring_provenance=authored["provenance"], run_id=run_id)
+        result.provenance["repair_attempts"] = attempt
+        if result.status != "error":
+            return result
+        code = result.errors[0]["code"]
+        if attempt == 0 and code in {"experiment_import_error", "experiment_invalid_result", "experiment_runtime_error"}:
+            feedback = f"Execution failed with {code}: {result.errors[0]['message']}"
+            continue
+        return result
+    raise AssertionError("bounded experiment repair loop exhausted")
 
 
 def _steps(run: ResearchRun) -> list[dict[str, Any]]:
@@ -140,63 +148,6 @@ def _bounded_tool_output(tool_name: str, result: Any) -> Any:
     return output
 
 
-def _planner_loop_decider(
-    planning_input: str,
-    planner_client: Any,
-    telemetry: RunTelemetry,
-    model: str,
-):
-    def decide(observation: dict[str, Any]) -> dict[str, Any]:
-        planned = plan_request(
-            planning_input,
-            client=TelemetryClient(
-                SafetyClient(planner_client), telemetry, stage="planning", model=model
-            ),
-            model=model,
-            observations=observation,
-        )
-        if planned["status"] == "error":
-            return {
-                "status": "error",
-                "error_type": planned["error_type"],
-                "error": planned["error"],
-                "error_stage": "planning",
-            }
-
-        plan = planned["plan"]
-        if plan["status"] != "ready":
-            return {
-                "status": plan["status"],
-                "step": None,
-                "reason": plan["reason"],
-            }
-
-        executed = observation.get("steps", [])
-        for candidate in plan["steps"]:
-            candidate_args = candidate["arguments"]
-            already_executed = any(
-                step.get("tool_name") == candidate["name"]
-                and (
-                    not step.get("normalized_args")
-                    or all(
-                        step["normalized_args"].get(key) == value
-                        for key, value in candidate_args.items()
-                    )
-                )
-                for step in executed
-            )
-            if not already_executed:
-                return {
-                    "status": "execute",
-                    "step": candidate,
-                    "reason": plan["reason"],
-                }
-
-        return {"status": "finish", "step": None, "reason": "evidence is sufficient"}
-
-    return decide
-
-
 def tool_results_to_evidence(tool_results: list[Any]) -> list[dict[str, str]]:
     """Serialize successful tool outputs as grounding-compatible evidence."""
     evidence = []
@@ -220,7 +171,7 @@ def tool_results_to_evidence(tool_results: list[Any]) -> list[dict[str, str]]:
     return evidence
 
 
-def _knowledge_planning_brief(record: dict[str, Any]) -> dict[str, Any]:
+def _related_research_brief(record: dict[str, Any]) -> dict[str, Any]:
     """Bounded related-research context for routing/method reuse, never answer evidence."""
     metadata, sections = record.get("metadata", {}), record.get("sections", {})
     brief = {
@@ -278,7 +229,6 @@ def _knowledge_records_to_evidence(records: list[dict[str, Any]]) -> list[dict[s
 def _finish(
     *,
     context_ids: list[str],
-    planning: dict[str, Any] | None,
     steps: list[dict[str, Any]],
     retrieval: dict[str, Any],
     research_run: ResearchRun | None,
@@ -286,27 +236,23 @@ def _finish(
     grounding_trace: dict[str, Any] | None = None,
     hitl: dict[str, Any] | None,
     outcome: str,
-    plan: dict[str, Any] | None = None,
     retrieval_result: dict[str, Any] | None = None,
     status: str = "ok",
     error_type: str | None = None,
     error: str = "",
     error_stage: str | None = None,
-    orchestration: dict[str, Any] | None = None,
     answer: str | None = None,
     evidence: list[dict[str, str]] | None = None,
     synthesis: dict[str, Any] | None = None,
     safety: dict[str, Any] | None = None,
     telemetry: RunTelemetry | None = None,
     loop: dict[str, Any] | None = None,
-    preflight: dict[str, Any] | None = None,
+    model_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if telemetry is not None:
         runtime_stage = error_stage
-        if runtime_stage is None and preflight and planning is None and preflight.get("outcome") in {"direct", "needs_input"}:
-            runtime_stage = "preflight"
-        if runtime_stage is None and outcome in {"needs_input", "no_action"}:
-            runtime_stage = "planning"
+        if runtime_stage is None and outcome == "needs_input":
+            runtime_stage = "model"
         elif runtime_stage is None and outcome == "needs_approval":
             runtime_stage = "hitl"
         elif runtime_stage is None and outcome == "abstain":
@@ -331,8 +277,6 @@ def _finish(
             runtime_stage = (
                 "execution"
                 if research_run and research_run.status == "failed"
-                else "planning"
-                if planning and planning.get("status") == "error"
                 else "retrieval"
                 if retrieval.get("status") == "error"
                 else None
@@ -343,7 +287,8 @@ def _finish(
         )
     observed = {
         "context": {"selected_ids": context_ids},
-        "planning": planning,
+        # Deprecated null fields retained solely for CLI/JSON consumers.
+        "planning": None,
         "steps": steps,
         "retrieval": retrieval,
         "research_run": (
@@ -352,16 +297,16 @@ def _finish(
         ),
         "grounding": grounding_trace if grounding_trace is not None else grounding,
         "hitl": hitl,
-        "orchestration": orchestration,
+        "orchestration": None,
         "outcome": {"status": outcome},
     }
     if loop is not None:
-        observed["loop"] = loop
-    if preflight is not None:
-        observed["preflight"] = preflight
+        observed["loop"] = {**loop, "outcome": outcome}
+    if model_trace is not None:
+        observed["model"] = {"tool_calls": model_trace}
     return {
         "status": status,
-        "plan": plan,
+        "plan": None,
         "retrieval": retrieval_result,
         "research_run": research_run,
         "grounding": grounding,
@@ -430,656 +375,278 @@ def _synthesize_and_ground(
                    outcome=outcome, answer=answer, evidence=evidence, synthesis=synthesis)
 
 
+
 def run_agent(
-    user_request: str,
-    *,
-    planner_client: Any,
-    preflight_client: Any | None = None,
-    experiment_authoring_client: Any | None = None,
-    hitl_client: Any | None = None,
-    synthesis_client: Any | None = None,
-    grounding_client: Any | None = None,
-    retrieval_client: Any | None = None,
-    retrieval_backend: str = "legacy",
-    retrieval_strategy: str = "dense",
-    knowledge_retriever: Any | None = None,
-    retrieval_filters: dict[str, Any] | None = None,
-    semantic_embedder: Any | None = None,
-    prepared_corpus: dict[str, Any] | None = None,
-    context_items: list[dict[str, Any]] | None = None,
-    proposed_action: dict[str, Any] | None = None,
-    existing_approval: dict[str, Any] | None = None,
-    product_boundaries: list[str] | None = None,
-    answer: str | None = None,
-    evidence: list[dict[str, str]] | None = None,
-    model: str = "",
-    run_id: str | None = None,
-    candidate_limit: int = 5,
-    market: str | None = None,
-    topic: str | None = None,
-    record_status: str | None = None,
-    loop_decider: Any | None = None,
-    max_iterations: int = 8,
+    user_request: str, *, client: Any | None = None, planner_client: Any | None = None,
+    experiment_authoring_client: Any | None = None, hitl_client: Any | None = None,
+    synthesis_client: Any | None = None, grounding_client: Any | None = None,
+    retrieval_client: Any | None = None, retrieval_backend: str = "legacy",
+    retrieval_strategy: str = "dense", knowledge_retriever: Any | None = None,
+    retrieval_filters: dict[str, Any] | None = None, semantic_embedder: Any | None = None,
+    prepared_corpus: dict[str, Any] | None = None, context_items: list[dict[str, Any]] | None = None,
+    proposed_action: dict[str, Any] | None = None, existing_approval: dict[str, Any] | None = None,
+    product_boundaries: list[str] | None = None, model: str = "", run_id: str | None = None,
+    candidate_limit: int = 5, market: str | None = None, topic: str | None = None,
+    record_status: str | None = None, max_iterations: int = 8,
     conversation_history: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
-    """Optional injected preflight, then the existing evidence-backed research pipeline."""
+    """One model owns direct answers, clarification, lookup and research actions.
+
+    Deprecated: planner_client aliases client for existing callers; it does not
+    create a planner stage. New callers should use client.
+    """
     if not isinstance(user_request, str) or not user_request.strip():
         raise ValueError("user_request must be a non-empty string")
-
+    if client is not None and planner_client is not None and client is not planner_client:
+        raise ValueError("supply client or planner_client, not two different primary clients")
+    client = client if client is not None else planner_client
+    if client is None:
+        raise ValueError("client is required")
+    if type(max_iterations) is not int or max_iterations < 1:
+        raise ValueError("max_iterations must be a positive integer")
     telemetry = RunTelemetry()
-    action = proposed_action or {
-        "description": "Execute the validated research plan.",
-        "environment": "local",
-        "reversible": True,
-    }
     boundaries = product_boundaries or []
+    action = proposed_action or {"description": "Execute read-only research.", "environment": "local", "reversible": True}
     safety = check_request_safety(user_request, action, boundaries)
+    run, results, calls, history = None, [], [], []
+    retrieval_result, hitl_trace = None, None
+    retrieval_trace = {"status": "not_used", "candidate_status": "not_used", "research_ids": []}
+    # Ordered, deduplicated related context; never evidence before verification.
+    # Bounded by max_iterations lookups, each returning at most candidate_limit.
+    safe_candidates = {}
+    context_ids = ["request_scope"]
+
+    def finish(outcome, **kwargs):
+        if run is not None and run.status == "running":
+            if outcome == "error":
+                run.fail()
+            else:
+                run.complete(final_status="partial")
+        return _finish(context_ids=context_ids, steps=_steps(run) if run else [],
+                       retrieval=retrieval_trace, retrieval_result=retrieval_result, research_run=run,
+                       grounding=None, hitl=hitl_trace, outcome=outcome, safety=safety,
+                       telemetry=telemetry, model_trace=calls,
+                       loop={"iterations": len(calls)} if calls else None, **kwargs)
+
+    def error(code, message, stage):
+        return finish("error", status="error", error_type=code, error=message, error_stage=stage)
+
     if safety["status"] == "blocked":
-        return _finish(
-            context_ids=["request_scope"],
-            planning=None,
-            steps=[],
-            retrieval={"status": "not_used", "research_ids": []},
-            research_run=None,
-            grounding=None,
-            hitl=None,
-            outcome="blocked",
-            safety=safety,
-            telemetry=telemetry,
-        )
-
-    preflight_trace = None
-    if preflight_client is not None:
-        checked = run_preflight(
-            user_request,
-            client=TelemetryClient(SafetyClient(preflight_client), telemetry, stage="preflight", model=model),
-            model=model,
-            capabilities=["historical_research", "inspect_universe", "evaluate_factor", "run_backtest", "run_research_experiment"],
-            product_boundaries=boundaries, conversation_history=conversation_history,
-        )
-        preflight_trace = checked["result"] or {"status": "error"}
-        if checked["status"] == "error" or preflight_trace["outcome"] != "research":
-            return _finish(
-                context_ids=["request_scope"], planning=None, steps=[],
-                retrieval={"status": "not_used", "research_ids": []},
-                research_run=None, grounding=None, hitl=None,
-                outcome="error" if checked["status"] == "error" else (
-                    "needs_input" if preflight_trace["outcome"] == "needs_input" else "success"
-                ),
-                status="error" if checked["status"] == "error" else "ok",
-                answer=preflight_trace.get("answer") or None,
-                evidence=[], safety=safety, telemetry=telemetry, preflight=preflight_trace,
-                error_type=checked["error_type"], error=checked["error"],
-                error_stage="preflight" if checked["status"] == "error" else None,
-            )
-
-    if retrieval_backend not in {"legacy", "qdrant"}:
-        raise ValueError("retrieval_backend must be legacy or qdrant")
-    if retrieval_strategy not in ("dense", "hybrid"):
-        raise ValueError("retrieval_strategy must be dense or hybrid")
+        return finish("blocked")
+    if retrieval_backend not in {"legacy", "qdrant"} or retrieval_strategy not in {"dense", "hybrid"}:
+        raise ValueError("invalid retrieval backend or strategy")
+    if type(candidate_limit) is not int or not 1 <= candidate_limit <= 5:
+        raise ValueError("candidate_limit must be between 1 and 5")
     if retrieval_backend == "legacy" and (knowledge_retriever is not None or retrieval_filters):
         raise ValueError("knowledge_retriever and retrieval_filters require the qdrant backend")
-    if retrieval_filters is not None and not isinstance(retrieval_filters, dict):
-        raise ValueError("retrieval_filters must be an object")
     filters = dict(retrieval_filters or {})
+    for key, value in (("market", market), ("topic", topic), ("status", record_status)):
+        if value is not None:
+            if key in filters and filters[key] != value:
+                raise ValueError(f"conflicting retrieval filter: {key}")
+            filters[key] = value
     if retrieval_backend == "qdrant":
-        if type(candidate_limit) is not int or not 1 <= candidate_limit <= 5:
-            raise ValueError("qdrant candidate_limit must be between 1 and 5")
-        for key, value in (("market", market), ("topic", topic), ("status", record_status)):
-            if value is not None:
-                if key in filters and filters[key] != value:
-                    raise ValueError(f"conflicting retrieval filter: {key}")
-                filters[key] = value
         filter_spec(filters)
 
-    safe_context_items = []
-    for item in context_items or []:
-        event = quarantine_untrusted_text(
-            item.get("text", ""), source=f"context:{item['id']}"
-        )
+    def safe_text(text, source):
+        event = quarantine_untrusted_text(text, source=source)
         if event["status"] == "quarantined":
             safety["events"].append(event)
-        else:
-            safe_context_items.append(item)
+            return False
+        return True
 
-    for index, message in enumerate(conversation_history or [], 1):
-        safe_context_items.append({
-            "id": f"conversation-{index}",
-            "kind": "history",
-            "role": message["role"],
-            "text": message["content"],
-        })
+    for index, message in enumerate(conversation_history or []):
+        if safe_text(message["content"], f"history:{index}"):
+            history.append(dict(message))
+    messages = [*_recent_history(history), {"role": "user", "content": user_request}]
+    for item in context_items or []:
+        if safe_text(item.get("text", ""), f"context:{item['id']}"):
+            messages.append({"role": "user", "content": "Unverified related context: " + item["text"][:2000]})
+            context_ids.append(item["id"])
+    schemas = [*TOOL_SCHEMAS, *(schema for schema in UTILITY_SCHEMAS
+                if schema["name"] != "search_knowledge" or retrieval_backend == "qdrant" or semantic_embedder is not None)]
+    schema_by_name = {schema["name"]: schema for schema in schemas}
+    primary = TelemetryClient(SafetyClient(client), telemetry, stage="model", model=model)
 
-    items = [
-        {"id": "request_scope", "kind": "current_instruction", "text": user_request},
-        *safe_context_items,
-    ]
-    selected = select_context(items)["selected"]
-    retrieval_result = None
-    retrieval_trace = {"status": "not_used", "research_ids": []}
-    safe_candidates = []
-
-    if retrieval_backend == "qdrant" or semantic_embedder is not None:
-        started = perf_counter()
-        details = {"backend": retrieval_backend, "candidate_ids": [], "quarantined_ids": [],
-                   "related_research_ids": [], "verified_ids": [], "verification_status": "not_used"}
-        if retrieval_backend == "qdrant":
-            details.update({"mode": retrieval_strategy, "filters": filters, "candidate_limit": candidate_limit})
+    for iteration in range(max_iterations + 1):
         try:
-            if retrieval_backend == "qdrant":
-                # Construct only after safety checks. Never index or fall back on runtime startup.
-                retriever = knowledge_retriever if knowledge_retriever is not None else KnowledgeRetriever()
-                search = retriever.search(user_request, mode=retrieval_strategy, limit=candidate_limit, **filters)
-                candidates = search["results"]
-                details.update({
-                    "latency_ms": dict(search.get("latency_ms", {})),
-                    "chunks_returned": search.get("chunks_returned"),
-                })
-            else:
-                candidates = retrieve_semantic(
-                    user_request, limit=candidate_limit,
-                    market=market, topic=topic, status=record_status,
-                    embedder=semantic_embedder, prepared_corpus=prepared_corpus,
-                )
-            if not isinstance(candidates, list) or len(candidates) > candidate_limit:
-                raise ValueError("retriever exceeded the record candidate limit or returned invalid results")
-            if any(not isinstance(record, Mapping) or not isinstance(record.get("research_id"), str)
-                   or not record["research_id"].strip() or not isinstance(record.get("text"), str)
-                   for record in candidates):
-                raise ValueError("retrieval candidates require a non-empty research_id and full text string")
-            details["candidate_ids"] = [record["research_id"] for record in candidates]
-            if len(set(details["candidate_ids"])) != len(candidates):
-                raise ValueError("retrieval candidate research_ids must be unique")
-            for record in candidates:
-                # Check full raw content and projected fields before truncation/JSON escaping.
-                raw_values = [record["text"], record.get("title", ""), record.get("question", "")]
-                raw_values.extend(record.get("sections", {}).values())
-                raw_values.extend(record.get("metadata", {}).get(field) for field in ("date", "market", "status"))
-                event = quarantine_untrusted_text(
-                    "\n".join(value for value in raw_values if isinstance(value, str)),
-                    source=f"retrieval:{record['research_id']}",
-                )
-                if event["status"] == "quarantined":
-                    safety["events"].append(event)
-                    details["quarantined_ids"].append(record["research_id"])
-                    continue
-                candidate = dict(record)
-                candidate.pop("verification", None)  # A retriever cannot attest answer support.
-                brief = _knowledge_planning_brief(candidate)
-                safe_candidates.append(candidate)
-                items.append({"id": candidate["research_id"], "kind": "retrieved_knowledge",
-                              "text": json.dumps(brief, ensure_ascii=False, separators=(",", ":"))})
-            retrieval_result = {
-                "status": "ok" if safe_candidates else "abstain", "results": [],
-                "rejected": [], "errors": [],
-                "reason": "" if safe_candidates else "no safe retrieval candidates",
-            }
+            response = primary.create({
+                "model": model, "instructions": PROMPT + "\nRuntime metadata: " + json.dumps(
+                    {"model": model or None, "capabilities": CAPABILITY_ITEMS, "boundaries": boundaries},
+                    ensure_ascii=False),
+                "input": messages, "tools": schemas, "tool_choice": "auto", "parallel_tool_calls": False,
+            })
         except Exception as exc:
-            retrieval_result = {
-                "status": "error", "results": [], "rejected": [],
-                "errors": [{"error_type": "retrieval_error", "error": f"{type(exc).__name__}: {exc}"}],
-                "reason": "retrieval failed closed",
-            }
-        details.setdefault("latency_ms", {})["runtime_total_ms"] = (perf_counter() - started) * 1000
-        details["candidate_status"] = retrieval_result["status"]
-        retrieval_result.update(details)
-        retrieval_trace = {
-            "status": retrieval_result["status"],
-            "research_ids": [
-                item["research_id"] for item in retrieval_result.get("results", [])
-            ],
-            **details,
-            "reason": retrieval_result.get("reason", ""),
-            "rejected": retrieval_result.get("rejected", []),
-            "errors": retrieval_result.get("errors", []),
-        }
-        if retrieval_result["status"] == "error":
-            error = (retrieval_result.get("errors") or [{}])[0]
-            return _finish(
-                context_ids=[item["id"] for item in selected], preflight=preflight_trace,
-                planning=None,
-                steps=[],
-                retrieval=retrieval_trace,
-                research_run=None,
-                grounding=None,
-                hitl=None,
-                outcome="error",
-                retrieval_result=retrieval_result,
-                status="error",
-                error_type=error.get("error_type", "retrieval_error"),
-                error=error.get("error", "retrieval failed"),
-                error_stage="retrieval",
-                safety=safety,
-                telemetry=telemetry,
-            )
-        selected = select_context(items)["selected"]
-        selected_ids = {item["id"] for item in selected if item["kind"] == "retrieved_knowledge"}
-        safe_candidates = [record for record in safe_candidates if record["research_id"] in selected_ids]
-        related_ids = [record["research_id"] for record in safe_candidates]
-        retrieval_result["related_research_ids"] = retrieval_trace["related_research_ids"] = related_ids
+            return error(provider_error_type(exc), f"{type(exc).__name__}: {exc}", "model")
+        try:
+            selected = _extract_function_calls(response)
+            text = response.get("output_text", "") if isinstance(response, Mapping) else getattr(response, "output_text", "")
+            if len(selected) > 1:
+                raise ValueError("select at most one tool per turn")
+            if not selected and (not isinstance(text, str) or not text.strip()):
+                raise ValueError("model must return text or one tool call")
+            if selected:
+                call = selected[0]
+                name, arguments = call["name"], call["arguments"]
+                if name not in schema_by_name:
+                    raise ValueError(f"unsupported model tool: {name}")
+                parameters = schema_by_name[name]["parameters"]
+                if set(arguments) - set(parameters["properties"]) or set(parameters.get("required", [])) - set(arguments):
+                    raise ValueError(f"invalid arguments for {name}")
+        except (ValueError, TypeError) as exc:
+            return error("malformed_response", str(exc), "model")
 
-    construction = construct_context(
-        user_request,
-        {"status": "ok", "context": selected},
-    )
-    planned = plan_request(
-        construction["input"],
-        client=TelemetryClient(
-            SafetyClient(planner_client), telemetry, stage="planning", model=model
-        ),
-        model=model,
-    )
-    if planned["status"] == "error":
-        planning = {
-            "status": "error",
-            "steps": [],
-            "error_type": planned["error_type"],
-        }
-        return _finish(
-            context_ids=[item["id"] for item in selected], preflight=preflight_trace,
-            planning=planning,
-            steps=[],
-            retrieval=retrieval_trace,
-            research_run=None,
-            grounding=None,
-            hitl=None,
-            outcome="error",
-            retrieval_result=retrieval_result,
-            status="error",
-            error_type=planned["error_type"],
-            error=planned["error"],
-            error_stage="planning",
-            safety=safety,
-            telemetry=telemetry,
-        )
-
-    plan = planned["plan"]
-    planning = {"status": plan["status"], "steps": plan["steps"]}
-    if plan["status"] != "ready":
-        if plan["status"] == "no_action" and not _is_capability_request(user_request) and safe_candidates:
-            tick = perf_counter()
-            try:
-                if retrieval_client is None:
-                    raise ValueError("retrieval_client is required for knowledge-answer verification")
+        if not selected:
+            if run is not None:
+                run.complete(final_status="partial" if any(item.status == "partial" for item in results) else "success")
+                bound_evidence = tool_results_to_evidence(results)
+            elif retrieval_result is not None:
+                started = perf_counter()
                 verified = verify_candidates(
-                    user_request, safe_candidates,
-                    client=TelemetryClient(SafetyClient(retrieval_client), telemetry, stage="retrieval_verifier", model=model),
+                    user_request, list(safe_candidates.values()),
+                    client=TelemetryClient(SafetyClient(retrieval_client or client), telemetry, stage="retrieval_verifier", model=model),
                     model=model,
                 )
-            except Exception as exc:
-                verified = {"status": "error", "results": [], "rejected": [],
-                            "errors": [{"error_type": "retrieval_error", "error": f"{type(exc).__name__}: {exc}"}],
-                            "reason": "verification failed closed"}
-            latency = retrieval_trace["latency_ms"]
-            latency["verification_ms"] = (perf_counter() - tick) * 1000
-            latency["runtime_total_ms"] += latency["verification_ms"]
-            verified_ids = [record["research_id"] for record in verified["results"]]
-            retrieval_result.update(verified)
-            retrieval_result.update(verification_status=verified["status"], verified_ids=verified_ids)
-            retrieval_trace.update({key: verified[key] for key in ("status", "reason", "rejected", "errors")})
-            retrieval_trace.update(verification_status=verified["status"], verified_ids=verified_ids, research_ids=verified_ids)
-            if verified["status"] == "error":
-                error = verified["errors"][0]
-                return _finish(
-                    context_ids=[item["id"] for item in selected], planning=planning, steps=[], preflight=preflight_trace,
-                    retrieval=retrieval_trace, retrieval_result=retrieval_result,
-                    research_run=None, grounding=None, hitl=None, plan=plan,
-                    outcome="error", status="error", error_type=error["error_type"],
-                    error_stage="retrieval", error=error["error"], safety=safety, telemetry=telemetry,
+                retrieval_result.update(verified)
+                retrieval_trace.update(status=verified["status"], verification_status=verified["status"],
+                                       verified_ids=[item["research_id"] for item in verified["results"]],
+                                       research_ids=[item["research_id"] for item in verified["results"]],
+                                       errors=verified["errors"], rejected=verified["rejected"])
+                retrieval_trace.setdefault("latency_ms", {})["verification_ms"] = (perf_counter() - started) * 1000
+                retrieval_trace["runtime_total_ms"] = (
+                    retrieval_trace["latency_ms"]["candidate_ms"] + retrieval_trace["latency_ms"]["verification_ms"]
                 )
+                if verified["status"] == "error":
+                    failure = verified["errors"][0]
+                    return error(failure["error_type"], failure["error"], "retrieval")
+                try:
+                    bound_evidence = _knowledge_records_to_evidence(verified["results"])
+                except (ValueError, TypeError) as exc:
+                    return error("knowledge_evidence_error", str(exc), "retrieval")
+            else:
+                return finish("success", answer=text.strip(), evidence=[])
+            if not bound_evidence:
+                return finish("abstain", answer="没有足够的已验证 evidence 来回答这个问题。", evidence=[])
+            return _synthesize_and_ground(
+                user_request, bound_evidence, synthesis_client=synthesis_client or client,
+                grounding_client=grounding_client or client, model=model, telemetry=telemetry,
+                conversation_history=history, context_ids=context_ids,
+                steps=_steps(run) if run else [], retrieval=retrieval_trace, retrieval_result=retrieval_result,
+                research_run=run, hitl=hitl_trace, safety=safety, model_trace=calls,
+                loop={"iterations": len(calls)},
+            )
+
+        if iteration == max_iterations:
+            if run is not None:
+                run.fail()
+            return error("max_iterations_exceeded", "Agent tool-call budget exhausted.", "loop")
+        calls.append({"name": name, "arguments": arguments})
+        if name == "request_clarification":
+            question = arguments["question"]
+            if not isinstance(question, str) or not question.strip():
+                return error("malformed_response", "clarification.question must be a non-empty string", "model")
+            if run is not None:
+                run.complete(final_status="partial")
+            return finish("needs_input", answer=question.strip(), evidence=[])
+        call_id = call.get("call_id") or f"call-{iteration + 1}"
+        messages.append({"type": "function_call", "call_id": call_id, "name": name,
+                         "arguments": json.dumps(arguments, ensure_ascii=False)})
+        if name == "lookup_history":
+            observation = {"history": history}
+        elif name == "search_knowledge":
+            query = arguments["query"]
+            if not isinstance(query, str) or not query.strip():
+                return error("malformed_response", "search_knowledge.query must be a non-empty string", "model")
+            started = perf_counter()
             try:
-                knowledge_evidence = _knowledge_records_to_evidence(verified["results"])
-            except ValueError as exc:
-                return _finish(
-                    context_ids=[item["id"] for item in selected], planning=planning, steps=[], preflight=preflight_trace,
-                    retrieval=retrieval_trace, retrieval_result=retrieval_result,
-                    research_run=None, grounding=None, hitl=None, plan=plan,
-                    outcome="error", status="error", error_type="knowledge_evidence_limit",
-                    error_stage="context", error=str(exc), safety=safety, telemetry=telemetry,
-                )
-            safe_knowledge = []
-            for item in knowledge_evidence:
-                snapshot = json.loads(item["text"])
-                untrusted_text = "\n".join(value for value in (
-                    snapshot["content"], snapshot["title"], *snapshot["provenance"].values(),
-                    *snapshot["provenance"]["source_ref"],
-                ) if isinstance(value, str))
-                event = quarantine_untrusted_text(untrusted_text, source=f"knowledge_evidence:{item['id']}")
-                if event["status"] == "quarantined":
-                    safety["events"].append(event)
+                if retrieval_backend == "qdrant":
+                    retriever = knowledge_retriever if knowledge_retriever is not None else KnowledgeRetriever()
+                    search = retriever.search(query, mode=retrieval_strategy, limit=candidate_limit, **filters)
+                    candidates = search["results"]
+                    retrieval_trace.update(backend="qdrant", mode=retrieval_strategy, filters=filters,
+                                           chunks_returned=search.get("chunks_returned"))
+                    latency = retrieval_trace.setdefault("latency_ms", {})
+                    for key, value in search.get("latency_ms", {}).items():
+                        latency[key] = latency.get(key, 0) + value
                 else:
-                    safe_knowledge.append(item)
-            retrieval_trace["knowledge_evidence_ids"] = [item["id"] for item in safe_knowledge]
-            if knowledge_evidence and not safe_knowledge:
-                safety.update({"status": "blocked", "rule": "untrusted_instruction_injection",
-                               "reason": "all knowledge evidence was quarantined"})
-                return _finish(
-                    context_ids=[item["id"] for item in selected], planning=planning, steps=[], preflight=preflight_trace,
-                    retrieval=retrieval_trace, retrieval_result=retrieval_result,
-                    research_run=None, grounding=None, hitl=None, plan=plan,
-                    outcome="blocked", safety=safety, telemetry=telemetry,
-                )
-            if safe_knowledge:
-                return _synthesize_and_ground(
-                    user_request, safe_knowledge, synthesis_client=synthesis_client,
-                    grounding_client=grounding_client, model=model, telemetry=telemetry,
-                    conversation_history=conversation_history,
-                    context_ids=[item["id"] for item in selected], planning=planning, steps=[], preflight=preflight_trace,
-                    retrieval=retrieval_trace, retrieval_result=retrieval_result,
-                    research_run=None, hitl=None, plan=plan, safety=safety,
-                )
-        if plan["status"] == "no_action" and _is_capability_request(user_request):
-            answer, capability_evidence, grounding = _capability_answer()
-            evidence_ids = [item["id"] for item in capability_evidence]
-            return _finish(
-                context_ids=[item["id"] for item in selected], preflight=preflight_trace,
-                planning=planning,
-                steps=[],
-                retrieval=retrieval_trace,
-                research_run=None,
-                grounding=grounding,
-                grounding_trace={
-                    "fully_grounded": True,
-                    "labels": ["supported"] * len(evidence_ids),
-                },
-                hitl=None,
-                outcome="success",
-                plan=plan,
-                retrieval_result=retrieval_result,
-                answer=answer,
-                evidence=capability_evidence,
-                synthesis={
-                    "status": "success",
-                    "answer": answer,
-                    "evidence_ids": evidence_ids,
-                },
-                safety=safety,
-                telemetry=telemetry,
-            )
-        return _finish(
-            context_ids=[item["id"] for item in selected], preflight=preflight_trace,
-            planning=planning,
-            steps=[],
-            retrieval=retrieval_trace,
-            research_run=None,
-            grounding=None,
-            hitl=None,
-            outcome=plan["status"],
-            plan=plan,
-            retrieval_result=retrieval_result,
-            answer=(
-                _clarification_answer(plan["reason"])
-                if plan["status"] == "needs_input"
-                else None
-            ),
-            safety=safety,
-            telemetry=telemetry,
-        )
-
-    if hitl_client is None:
-        raise ValueError("hitl_client is required for a ready plan")
-    run = ResearchRun(
-        user_request=user_request,
-        **({"run_id": run_id} if run_id is not None else {}),
-    )
-    tool_results = []
-    hitl_trace = None
-
-    def gate_before_execute(_: dict[str, Any]) -> dict[str, Any]:
-        nonlocal hitl_trace
-        gate = gate_action(
-            user_request,
-            action,
-            existing_approval or {"approved": False, "scope": None},
-            boundaries,
-            client=TelemetryClient(
-                SafetyClient(hitl_client), telemetry, stage="hitl", model=model
-            ),
-            model=model,
-        )
-        if gate["status"] == "error":
-            return {
-                "status": "error",
-                "error_type": gate["error_type"],
-                "error_stage": "hitl",
-                "error": gate["error"],
-            }
-        hitl_trace = {"decision": gate["decision"]}
-        if gate["decision"] != "proceed":
-            return {"status": "stop", "outcome": gate["decision"]}
-        return {"status": "proceed"}
-
-    def execute_agent_step(context: dict[str, Any]) -> ToolResult | None:
-        step = context["step"]
-        if step["name"] != "run_research_experiment":
-            return None
-        normalized_args = {"spec": step["arguments"]["spec"]}
-        if experiment_authoring_client is None:
-            return ToolResult.error(
-                step["name"],
-                normalized_args,
-                "experiment_authoring_unavailable",
-                "experiment_authoring_client is required",
-                run_id=context["run"].run_id,
-                provenance={"module": "agent.tools.experiment"},
-            )
-
-        authoring_client = TelemetryClient(
-            SafetyClient(experiment_authoring_client),
-            telemetry,
-            stage="experiment_authoring",
-            model=model,
-        )
-        feedback = None
-        repairable_authoring = {"invalid_experiment_source", "malformed_response"}
-        repairable_execution = {
-            "experiment_import_error",
-            "experiment_invalid_result",
-            "experiment_runtime_error",
-        }
-        for attempt in range(2):
-            authored = author_experiment(
-                user_request,
-                step["arguments"]["spec"],
-                client=authoring_client,
-                model=model,
-                repair_feedback=feedback,
-            )
-            if authored["status"] == "error":
-                if attempt == 0 and authored["error_type"] in repairable_authoring:
-                    feedback = f"Source validation failed: {authored['error']}"
-                    continue
-                return ToolResult.error(
-                    step["name"],
-                    normalized_args,
-                    authored["error_type"],
-                    authored["error"],
-                    run_id=context["run"].run_id,
-                    provenance={"module": "agent.tools.experiment"},
-                )
-            executed = run_research_experiment(
-                step["arguments"]["spec"],
-                authored_program=authored["program"],
-                authoring_provenance=authored["provenance"],
-                run_id=context["run"].run_id,
-            )
-            executed.provenance["repair_attempts"] = attempt
-            if executed.status != "error":
-                return executed
-            code = executed.errors[0]["code"]
-            if attempt == 0 and code in repairable_execution:
-                feedback = f"Execution failed with {code}: {executed.errors[0]['message']}"
-                continue
-            return executed
-        raise AssertionError("bounded experiment repair loop exhausted")
-
-    planner_decider = (
-        loop_decider
-        if loop_decider is not None
-        else _planner_loop_decider(
-            construction["input"], planner_client, telemetry, model
-        )
-    )
-    try:
-        loop_result = run_loop(
-            user_request,
-            decide_next=planner_decider,
-            initial_steps=plan["steps"],
-            run=run,
-            tool_results=tool_results,
-            before_execute=gate_before_execute,
-            execute_step=execute_agent_step,
-            max_iterations=max_iterations,
-        )
-    except Exception as exc:
-        return _finish(
-            context_ids=[item["id"] for item in selected], preflight=preflight_trace,
-            planning=planning,
-            steps=_steps(run),
-            retrieval=retrieval_trace,
-            research_run=run if run.steps else None,
-            grounding=None,
-            hitl=hitl_trace,
-            outcome="error",
-            plan=plan,
-            retrieval_result=retrieval_result,
-            status="error",
-            error_type="orchestration_error",
-            error=f"{type(exc).__name__}: {exc}",
-            error_stage="orchestration",
-            orchestration={"status": "error", "type": "orchestration_error"},
-            safety=safety,
-            telemetry=telemetry,
-        )
-
-    run = loop_result["research_run"] or run
-    visible_run = run if run.steps else None
-    loop_trace = {
-        "iterations": loop_result["iterations"],
-        "outcome": loop_result["outcome"],
-    }
-    if loop_result["status"] == "error":
-        return _finish(
-            context_ids=[item["id"] for item in selected], preflight=preflight_trace,
-            planning=planning,
-            steps=_steps(run),
-            retrieval=retrieval_trace,
-            research_run=visible_run,
-            grounding=None,
-            hitl=hitl_trace,
-            outcome="error",
-            plan=plan,
-            retrieval_result=retrieval_result,
-            status="error",
-            error_type=loop_result["error_type"],
-            error=loop_result["error"],
-            error_stage=loop_result["error_stage"],
-            safety=safety,
-            telemetry=telemetry,
-            loop=loop_trace,
-        )
-
-    steps = _steps(run)
-    if run.status == "failed":
-        failed_step = next((step for step in reversed(run.steps) if step["status"] == "error"), {})
-        failure = (failed_step.get("errors") or [{
-            "code": "research_run_failed",
-            "message": "ResearchRun failed without a structured tool error.",
-        }])[0]
-        return _finish(
-            context_ids=[item["id"] for item in selected], preflight=preflight_trace,
-            planning=planning,
-            steps=steps,
-            retrieval=retrieval_trace,
-            research_run=run,
-            grounding=None,
-            hitl=hitl_trace,
-            outcome="error",
-            plan=plan,
-            retrieval_result=retrieval_result,
-            status="error",
-            error_type=failure["code"],
-            error=failure["message"],
-            error_stage="execution",
-            safety=safety,
-            telemetry=telemetry,
-            loop=loop_trace,
-        )
-
-    if loop_result["outcome"] in {
-        "needs_input", "no_action", "needs_approval", "blocked"
-    }:
-        return _finish(
-            context_ids=[item["id"] for item in selected], preflight=preflight_trace,
-            planning=planning,
-            steps=steps,
-            retrieval=retrieval_trace,
-            research_run=visible_run,
-            grounding=None,
-            hitl=hitl_trace,
-            outcome=loop_result["outcome"],
-            plan=plan,
-            retrieval_result=retrieval_result,
-            answer=(
-                _clarification_answer(
-                    (loop_result.get("decision") or {}).get("reason")
-                )
-                if loop_result["outcome"] == "needs_input"
-                else None
-            ),
-            safety=safety,
-            telemetry=telemetry,
-            loop=loop_trace,
-        )
-
-    bound_evidence = tool_results_to_evidence(tool_results)
-    safe_evidence = []
-    tool_injection = False
-    for item in bound_evidence:
-        event = quarantine_untrusted_text(
-            item["text"], source=f"tool_output:{item['id']}"
-        )
-        if event["status"] == "quarantined":
-            tool_injection = True
-            safety["events"].append(event)
+                    candidates = retrieve_semantic(query, limit=candidate_limit, market=market, topic=topic,
+                                                   status=record_status, embedder=semantic_embedder, prepared_corpus=prepared_corpus)
+                    retrieval_trace.update(backend="legacy")
+                if not isinstance(candidates, list) or len(candidates) > candidate_limit:
+                    raise ValueError("retriever exceeded candidate limit or returned invalid results")
+                ids = [record["research_id"] for record in candidates]
+                if any(not isinstance(identity, str) or not identity.strip() for identity in ids) or len(set(ids)) != len(ids):
+                    raise ValueError("retrieval candidates require unique non-empty research_ids")
+                quarantined = []
+                for record in candidates:
+                    if not isinstance(record.get("text"), str):
+                        raise ValueError("retrieval candidate requires full text")
+                    # Inspect the entire record before bounded projection, including provenance.
+                    if not safe_text(json.dumps(record, ensure_ascii=False, default=str), f"retrieval:{record['research_id']}"):
+                        quarantined.append(record["research_id"])
+                        safe_candidates.pop(record["research_id"], None)
+                        continue
+                    candidate = dict(record)
+                    candidate.pop("verification", None)
+                    safe_candidates[record["research_id"]] = candidate
+                status = "ok" if safe_candidates else "abstain"
+                retrieval_result = {"status": status, "results": [], "errors": [], "rejected": [],
+                                    "candidate_ids": list(dict.fromkeys([*retrieval_trace.get("candidate_ids", []), *ids])),
+                                    "related_research_ids": list(safe_candidates)}
+                retrieval_trace.update(retrieval_result, candidate_status=status, research_ids=[],
+                                       quarantined_ids=list(dict.fromkeys([*retrieval_trace.get("quarantined_ids", []), *quarantined])),
+                                       verified_ids=[], verification_status="not_used", candidate_limit=candidate_limit)
+                observation = {"context_type": "related_research_context",
+                               "records": [_related_research_brief(record) for record in safe_candidates.values()]}
+            except Exception as exc:
+                failure = {"error_type": "retrieval_error", "error": f"{type(exc).__name__}: {exc}"}
+                retrieval_result = {**(retrieval_result or {}), "status": "error", "results": [], "errors": [failure], "rejected": []}
+                retrieval_trace.update(status="error", candidate_status="error", errors=[failure], research_ids=[])
+                return error("retrieval_error", f"{type(exc).__name__}: {exc}", "retrieval")
+            finally:
+                latency = retrieval_trace.setdefault("latency_ms", {})
+                latency["candidate_ms"] = latency.get("candidate_ms", 0) + (perf_counter() - started) * 1000
+                retrieval_trace["runtime_total_ms"] = latency["candidate_ms"] + latency.get("verification_ms", 0)
         else:
-            safe_evidence.append(item)
-    bound_evidence = safe_evidence
-    if tool_injection and not bound_evidence:
-        safety.update({
-            "status": "blocked",
-            "rule": "untrusted_instruction_injection",
-            "reason": "all executable evidence was quarantined by the safety boundary",
-        })
-        return _finish(
-            context_ids=[item["id"] for item in selected], preflight=preflight_trace,
-            planning=planning,
-            steps=steps,
-            retrieval=retrieval_trace,
-            research_run=run,
-            grounding=None,
-            hitl=hitl_trace,
-            outcome="blocked",
-            plan=plan,
-            retrieval_result=retrieval_result,
-            safety=safety,
-            telemetry=telemetry,
-        )
-    return _synthesize_and_ground(
-        user_request, bound_evidence, synthesis_client=synthesis_client,
-        grounding_client=grounding_client, model=model, telemetry=telemetry,
-        conversation_history=conversation_history, answer=answer, evidence=evidence,
-        context_ids=[item["id"] for item in selected], preflight=preflight_trace,
-        planning=planning,
-        steps=steps,
-        retrieval=retrieval_trace,
-        research_run=run,
-        hitl=hitl_trace,
-        plan=plan,
-        retrieval_result=retrieval_result,
-        safety=safety,
-        loop=loop_trace,
-    )
+            # No HITL or ResearchRun exists before the model chooses research work.
+            if hitl_client is None:
+                hitl_client = client
+            gate = gate_action(
+                user_request, {**action, "tool": name}, existing_approval or {"approved": False, "scope": None},
+                boundaries, client=TelemetryClient(SafetyClient(hitl_client), telemetry, stage="hitl", model=model), model=model,
+            )
+            hitl_trace = {key: gate[key] for key in ("decision", "approval_request", "reason")}
+            if gate["status"] == "error":
+                return error(gate["error_type"], gate["error"], "hitl")
+            if gate["decision"] != "proceed":
+                if run is not None:
+                    run.complete(final_status="partial")
+                return finish(gate["decision"], answer=gate["approval_request"], evidence=[])
+            if run is None:
+                run = ResearchRun(user_request=user_request, **({"run_id": run_id} if run_id is not None else {}))
+            if name == "run_research_experiment":
+                try:
+                    result = _execute_experiment(user_request, arguments["spec"], run.run_id,
+                                                 experiment_authoring_client or client, telemetry, model)
+                except Exception as exc:
+                    result = ToolResult.error(name, arguments, "step_execution_error", str(exc) or type(exc).__name__, run_id=run.run_id)
+                run.add_step(result)
+                results.append(result)
+                if result.status == "error":
+                    run.fail()
+            else:
+                execute_steps([{"name": name, "arguments": arguments}], run=run, tool_results=results, finalize=False)
+                result = results[-1]
+            if run.status == "failed":
+                failure = (result.errors or [{"code": "research_run_failed", "message": "ResearchRun failed without a structured tool error."}])[0]
+                return error(failure["code"], failure["message"], "execution")
+            observation = json.loads(tool_results_to_evidence([result])[0]["text"])
+            if not safe_text(json.dumps(observation, ensure_ascii=False), f"tool:{name}"):
+                return finish("blocked", evidence=[])
+        messages.append({"type": "function_call_output", "call_id": call_id,
+                         "output": json.dumps(observation, ensure_ascii=False, sort_keys=True)})
+
+    raise AssertionError("bounded model loop exhausted")
 
 
 __all__ = ["run_agent", "tool_results_to_evidence"]

@@ -295,15 +295,35 @@ class DeepSeekChatClient:
             "model": payload["model"],
             "messages": [
                 {"role": "system", "content": payload["instructions"]},
-                {"role": "user", "content": payload["input"]},
+                *_deepseek_messages(payload["input"]),
             ],
             "temperature": 0.0,
             "extra_body": {"thinking": {"type": "disabled"}},
         }
         if payload.get("tools"):
-            request.update(tools=_deepseek_tools(payload["tools"]), tool_choice="required")
+            request.update(tools=_deepseek_tools(payload["tools"]),
+                           tool_choice=payload.get("tool_choice", "required"),
+                           parallel_tool_calls=payload.get("parallel_tool_calls", False))
         return _sdk_call(self.client, self.client_args, ("chat", "completions"),
                          request, _normalize_deepseek, self.timeout)
+
+
+def _deepseek_messages(value):
+    """Translate the shared Responses conversation, including native tool replies."""
+    if isinstance(value, str):
+        return [{"role": "user", "content": value}]
+    messages = []
+    for item in value:
+        if item.get("type") == "function_call":
+            messages.append({"role": "assistant", "content": None, "tool_calls": [{
+                "id": item["call_id"], "type": "function",
+                "function": {"name": item["name"], "arguments": item["arguments"]},
+            }]})
+        elif item.get("type") == "function_call_output":
+            messages.append({"role": "tool", "tool_call_id": item["call_id"], "content": item["output"]})
+        else:
+            messages.append({"role": item["role"], "content": item["content"]})
+    return messages
 
 
 def _bounded_timeout(timeout):

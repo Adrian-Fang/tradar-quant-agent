@@ -47,7 +47,7 @@ Tradar 聚焦于量化研究流程的 Agent 化，不试图覆盖投资决策、
 | Research Record corpus | 已落地 |
 | Lexical / Semantic Retrieval（含 CJK character bigram）与 Retrieval Eval（baseline / semantic / abstention） | 已落地 |
 | Relevance Verification Eval 与 Verified Semantic Retrieval runtime | 已落地 |
-| Planning contract/eval、runtime planner 与 planner → executor integration | 已落地 |
+| Model-first native tool loop；旧 Planning contract/eval 独立保留 | 已落地 |
 | Grounding contract/eval 与 runtime verifier | 已落地 |
 | Memory write/update/ignore decision eval、append-only lifecycle store、recall eval 与 runtime recall | 已落地 |
 | HITL approval gate eval、runtime gate 与 minimal approval lifecycle | 已落地 |
@@ -56,20 +56,22 @@ Tradar 聚焦于量化研究流程的 Agent 化，不试图覆盖投资决策、
 | AE-11 provider-call telemetry 与 run-level observability | 已落地 |
 | AE-12 runtime safety boundary 与 indirect-injection quarantine | 已落地 |
 | AE-14 Qdrant hybrid knowledge retrieval（BM25 + dense / RRF / canonical hydration / verification）与 opt-in runtime | 已落地 |
-| AE-16 planning-first routing：related research context 与 verified answer evidence 分离 | 已落地 |
+| Related research context 与 verified answer evidence 分离（model-first runtime） | 已落地 |
 | `research/` quantitative engine、factor analysis 与 backtest | 已落地 |
 
-`agent/agent.py::run_agent` 已把稳定 Tool 的正常请求路径接通：请求经过 safety/context/retrieval、planning、HITL、确定性执行与 `ResearchRun`，再由实际 `ToolResult` 形成有界 evidence，完成 answer synthesis、cited-evidence grounding，并返回最终答案与 telemetry。这是可验证的 Agent runtime，不等于 fully autonomous production loop：context compactor 目前未接入 `run_agent()`，memory recall 不会自动注入 context，HITL approval lifecycle 尚未接 executor resume 或 tool interception，approval resume/replan 仍未实现；调用方若不提供具体 action，HITL 默认使用 generic proposed action。
+`agent/agent.py::run_agent` 是 safety → model（`tool_choice=auto`）→ tools → model 的有界循环。普通问题直接回答；`request_clarification` 立即澄清；研究 Tool 被选中后才进入 HITL、确定性执行与 `ResearchRun`。模型看实际有界 tool observations 决定下一步；完成研究后只用真实 ToolResult evidence 做 synthesis/cited-evidence grounding。没有独立 preflight/planner/router，也没有另一套“模型失败后转 Agent”系统。Memory store、context selector/compactor、旧 planner/loop evaluator 仍是独立能力，不在主 runtime 热路径；approval resume 未实现。
+
+普通 chat/meta 是一次 model call、零研究阶段，不做研究 grounding；provider/格式错误显式返回，不再用另一个路由阶段掩盖。初始模型上下文只放最近最多 4 条、合计 2,000 个 history content 字符；`lookup_history` 按需读取更早的安全 history。研究 synthesis 仍可使用完整安全 history，但 history 不会成为 evidence。Telemetry 保留 static provider discovery，避免 Mock 动态 `.client` 链导致 OOM。
 
 Telemetry 记录 provider/model/stage、provider 返回的 usage tokens、provider latency 与完整 runtime wall-clock，并使用版本化配置估算成本，同时保留 per-stage、failure/terminal attribution。Safety 将 system/product rules 视为可信指令，将 user/retrieval/tool 内容视为不可信数据；明显不安全请求和 active indirect injection 会被确定性 block/quarantine，destructive action 仍经过 HITL。
 
 DeepSeek / OpenAI 远程 SDK 调用关闭 SDK 隐式重试：每次尝试最多 20 秒（含完整响应读取），总调用预算 45 秒，瞬态连接/超时、408/409/429/5xx 最多重试一次。无 `Retry-After` 时等待 250–500 ms；有效的服务端等待超过 1 秒时直接返回错误，不提前重试。空响应/无效 provider envelope 不重试；模型内容不符合阶段 schema 仍由原有 parser/repair contract 处理。错误区分 `provider_timeout`、`provider_rate_limit`、`provider_empty_response`、`provider_invalid_response`，其它操作失败保留 `provider_error`，不会变为语义 abstain。Telemetry 增加 attempt/retry 计数及各 attempt latency/backoff；call latency 与 per-stage `provider_latency_ms` 包含重试等待。失败尝试没有 usage 时，整次调用的累计 tokens/cost 保持 unknown，不当作零；Ollama 本地 embedding 策略不变。
 
-CLI 知识检索默认关闭；建立 AE-14 索引后，可用 `python -m agent.main "研究请求" --retrieval qdrant` 启用 dense Qdrant → candidate quarantine → compact related-research context → planning。`ready` 直接进入 HITL/新研究，`needs_input` 直接澄清；两者不调用 relevance verifier。只有非 capability 的历史知识 `no_action` 且有安全候选时，才运行 batched relevance verification → verified evidence → synthesis/grounding。Related context 可复用方法，但不能作为答案 evidence/citation。HTTP `/v1/research` 默认使用同一 Qdrant/dense 路径，保留 history、单请求锁与响应契约。`--retrieval-strategy hybrid` 可切换到 dense + BM25/RRF；`ollama` / `openai` legacy 路径也采用同样的 context/evidence 分离。空候选不阻止 planning/新研究；基础设施错误在 retrieval 显式终止，verifier 错误只会阻断实际知识答案路径。Runtime 不自动建索引，历史记录不冒充新实验 evidence。注入接口、过滤器与操作说明见 [retrieval README](resources/retrieval/README.md#agent-runtime-opt-in)。
+CLI 知识检索默认关闭；`--retrieval qdrant` 仅暴露按需 `search_knowledge`，不会在模型前访问 Qdrant/Ollama。HTTP 默认暴露同一 dense capability，history/锁/响应 shape 不变；`--retrieval-strategy hybrid` 保留 BM25/RRF，legacy `ollama`/`openai` 也按需运行。模型调用 lookup 后得到 quarantine 过的 compact related context；如果继续做新研究，跳过 verifier 且 context 不进入 evidence。若只基于历史记录结束，则 batched relevance verification → supported full-record evidence → synthesis/grounding；不支持则 abstain，基础设施/verifier 错误显式 fail closed。Runtime 不自动建索引。见 [retrieval README](resources/retrieval/README.md#agent-runtime-opt-in)。
 
 Deterministic safety gate 同时覆盖常见英文攻击及中文直接指令：忽略规则、暴露系统提示词、读取/输出密钥或凭据、绕过安全/审批。中文引号中的分析材料及非执行性的安全讨论不视为指令；这是有界命令模式，不是通用多语言分类器。
 
-历史知识 `no_action` 之后，只有 verifier 明确接受的记录才可转换为有界 `knowledge_record` evidence，保留 `knowledge-<research_id>` 引用和文件 hash/date/status 等 provenance；不创建 ResearchRun 或执行研究。无支持则 controlled no-action/no-evidence，不从 related context 拼凑答案。相关记录不代表完整支持：synthesis 可 abstain，grounding 不支持的答案会被 block。
+模型选择知识 lookup 后，连续 lookup 的安全记录按 `research_id` 累积去重（history lookup 不清空记录）。若模型结束历史答案路径，只有 verifier 明确接受的记录才可转换为有界 `knowledge_record` evidence，保留 `knowledge-<research_id>` 引用和文件 hash/date/status 等 provenance；不创建 ResearchRun 或执行研究。无支持则 controlled abstain，不从 related context 拼凑答案。相关记录不代表完整支持：synthesis 可 abstain/error，grounding 不支持的答案会被 block，loop trace 如实记录最终 outcome。`run_agent(client=...)` 是主接口；旧 `planner_client` 参数及 null `plan`/`observed.planning`/`observed.orchestration` 字段仅作已弃用兼容，不代表运行阶段。
 
 Authored Research Experiments 在隔离的只读数据/code sandbox 内执行：4 GiB 地址空间、80 秒 CPU / 90 秒 wall-time，单进程、64 个文件描述符及 64 KiB 输出限制。Worker 独立配置 DuckDB 为 1 thread / 256 MiB memory，spill 位于 `/work/cache/duckdb`（最多 256 MiB）；整个 `/work` 为 512 MiB 有界 tmpfs。共享/生产 DuckDB 默认值不变。仅 worker 通过 `TRADAR_EXPERIMENT_SANDBOX=1` 启用 bounded cold-window 复权读取：保留全历史事件累计口径，但不构建全历史 daily-factor cache；前复权按每个 symbol 窗口内最后交易日取单个 anchor，避免对宽价格结果执行全表 window。sandbox 外仍保留共享 cache rebuild / force-refresh 语义。Authoring 必须只加载需要的字段/掩码并及时释放宽表中间结果，逐个 horizon 计算/汇总/释放，不能缩短研究窗口或吞掉资源错误。超限保留结构化执行错误；这些限制不保证任意规模研究都能完成。
 
@@ -114,7 +116,7 @@ tradar/
 │   ├── tools/              # Tool schemas、calling、research tools、executor 与 Tool Calling eval
 │   ├── context/            # Selector、compactor、builder 与 Context Eval runner
 │   ├── retrieval/          # Research Record loader、lexical/semantic retrieval、verification 与 eval
-│   ├── planning/           # Validated planner、orchestrator 与 Planning eval
+│   ├── planning/           # Standalone planner/orchestrator contract 与 eval，非主 runtime
 │   ├── grounding/          # Claim ↔ Evidence verifier 与 Grounding eval
 │   ├── memory/             # Decision、atomic store、recall 与对应 eval
 │   └── hitl/               # Approval gate、approval lifecycle 与 HITL eval
@@ -166,10 +168,12 @@ python -m agent.hitl.eval --provider fixture --repeats 1
 python -m agent.agent_eval --provider fixture --repeats 1
 ```
 
-`agent/agent.py` 目前提供 runtime callable `run_agent`，尚无 thin CLI/runtime entrypoint；`agent.agent_eval` 是现有 whole-system fixture evaluator。需要模型时，按 provider 配置对应 API key 后运行支持该 provider 的 capability runner；远程 eval 不属于测试套件。
+`agent.main` / `agent.http` 使用同一 model-first runtime。`python -m agent.model_eval` 是首轮决策 fixture eval（不执行研究），`agent.agent_eval` 保留旧 trace 的离线 diagnostic dataset；它不验证当前 native loop。远程 eval 不属于测试套件。
 
 测试套件：
 
 ```bash
-python -m unittest discover -s tests -p 'test_*.py'
+python -m pytest -q tests/test_agent_model_loop.py tests/test_agent_evidence.py tests/test_agent_observability.py tests/test_agent_safety.py
 ```
+
+这是小型 runtime fast gate，不是全仓验证。默认 pytest collection 排除 `tests/sandbox/`；真实 isolation/resource tests 必须显式 opt-in，不能作为普通 coding validation。分类与命令见 [tests README](tests/README.md)。

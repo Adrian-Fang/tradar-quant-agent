@@ -107,28 +107,19 @@ def run_request(
     model = model or _default_model(provider)
 
     semantic_embedder = None
-    if retrieval == "ollama":
-        semantic_embedder = (
-            embedding_client
-            if embedding_client is not None
-            else OllamaEmbeddingClient()
-        )
-    elif retrieval == "openai":
-        semantic_embedder = (
-            embedding_client
-            if embedding_client is not None
-            else OpenAIEmbeddingClient()
-        )
+    if retrieval in {"ollama", "openai"}:
+        def semantic_embedder(texts):
+            nonlocal embedding_client
+            if embedding_client is None:
+                embedding_client = OllamaEmbeddingClient() if retrieval == "ollama" else OpenAIEmbeddingClient()
+            return embedding_client(texts)
 
     runtime_options = dict(run_options)
-    # The application always preflights; low-level injected callers may opt out.
-    preflight_client = runtime_options.pop("preflight_client", client)
     if history is not None:
         runtime_options["conversation_history"] = history
     return run_agent(
         user_request,
-        planner_client=client,
-        preflight_client=preflight_client,
+        client=client,
         experiment_authoring_client=client,
         hitl_client=client,
         synthesis_client=client,

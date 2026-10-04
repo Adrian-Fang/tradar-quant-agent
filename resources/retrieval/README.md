@@ -210,56 +210,48 @@ tests; omit it to construct the standard backend **after request safety checks**
 these options. `market`, `topic`, `record_status` map to exact backend filters;
 `retrieval_filters` exposes the complete filter contract above. Conflicting or
 invalid filters fail configuration validation; no language-trigger filters are
-inferred. The Qdrant record candidate limit is 1–5, with no hidden refill.
+inferred. The Qdrant record candidate limit is 1–5 per lookup, with no hidden refill.
 Runtime strategy defaults to dense; set `retrieval_strategy="hybrid"` to retain
 hybrid retrieval. The standalone backend's hybrid default, comparison eval and
 index profile remain unchanged; selecting a runtime strategy needs no rebuild.
 
-Dense (or explicit hybrid) retrieval -> canonical full-record hydration -> safety quarantine ->
-compact related-research context -> **planning first**. `ready` executes research
-through HITL without relevance verification; `needs_input` clarifies immediately.
-Capability `no_action` uses capability metadata. Non-capability `no_action` with
-safe candidates enters `verify_candidates()` -> supported evidence -> synthesis/grounding.
-Empty/generic no-action paths with no safe candidates finish without a verifier call.
-The unchanged planner contract has no separate knowledge-intent field: non-capability
-`no_action` with safe candidates is treated as a historical-answer attempt, not
-inferred from language triggers or freeform `reason` text.
+Retrieval is a model-selected `search_knowledge(query)` tool, not an entry
+prerequisite. A generic answer or clarification makes no Qdrant/embedding/verifier
+call. The backend is constructed only when the model actually requests lookup.
 
-Both Qdrant and legacy `retrieve_semantic()` retain candidate order; standalone
-`retrieve_verified()` remains available for retrieval eval/callers, but runtime
-does not use its combined pre-planning gate. Empty or unsupported history never
-prevents fresh planning/research. Unsupported knowledge candidates produce controlled
-no-action/no-evidence. Infrastructure/stale index errors stop before planning at
-`error_stage="retrieval"`; verifier errors fail closed at that same stage only
-on the knowledge-answer route, with planning preserved.
-Trace separates `candidate_status`/`candidate_ids`/`related_research_ids` from
-`verification_status` (`not_used|ok|abstain|error`)/`verified_ids`; existing
-`research_ids` contains verified IDs only. Overall retrieval status reflects the
-last attempted retrieval/verification stage. Filters, quarantine, rejected/error
-details and backend latency survive later failures; `verification_ms` appears
-only when verification runs. `runtime_total_ms` sums retrieval/quarantine and
-verification time, excluding intervening planning. `retrieval_verifier` provider
-telemetry appears after planning only on that route; backend timing is not a model call.
+Lookup performs canonical full-record hydration, quarantine and compact related
+brief projection. Successive lookups accumulate safe records by `research_id` in
+first-seen order; a repeated ID updates the same entry, and an empty lookup or
+`lookup_history` does not clear it. A newly quarantined version removes that ID
+from the safe pool. The pool is bounded by the tool-call budget times the
+per-lookup candidate limit; final evidence remains limited to five records.
+The next primary model turn can choose fresh research (no
+verifier) or finish a historical answer. Only the latter runs
+`verify_candidates()` against the original question, then supported evidence →
+synthesis/grounding. Empty/unsupported records abstain rather than invent support.
+Infrastructure/stale-index/verifier errors remain explicit retrieval errors.
+No implicit indexing or silent fallback is introduced.
 
-Planning receives only identity/title, date/market/status, question (240 chars),
-method (160), conclusion (200), caveats (160), and explicit `truncated_fields`;
-title is capped at 100 chars and scope strings at 80. Findings, source paths/hashes, provenance prose,
-verification reasons and retrieval diagnostics are omitted from planning.
-Full raw source and projected fields are quarantined before planning, including
-text beyond excerpt bounds. Brief payloads explicitly identify
-`context_type: related_research_context`, remaining selectable as `retrieved_knowledge`.
-Full safe candidates stay separate locally until verification; public `results`
-contains verified records only. Briefs never replace factual evidence.
+Briefs contain identity/title, date/market/status, question (240 chars), method
+(160), conclusion (200), caveats (160), and truncation flags, not scores/provenance
+or full records. Full raw record metadata/provenance is quarantined before this
+projection. Briefs are model context only; only verified full records may receive
+`knowledge-<research_id>` citations. When fresh research executes, its ToolResults,
+not the historical briefs, become evidence.
 
-Historical context is not fresh quantitative evidence. After the initial planner
-returns historical `no_action`, verification must succeed before supported
-records may answer a historical question through the **same synthesis and
-grounding contracts** as executed research. No ResearchRun, HITL or executor is
-created on this knowledge-only route. Verification is relevance, not proof of
-complete coverage: synthesis can still return `insufficient_evidence` and abstain;
-unsupported/contradicted/unverifiable grounding blocks the answer.
-Direct `run_agent()` callers must supply synthesis and grounding clients for
-knowledge answers, just as for executed answers; the CLI supplies both already.
+Trace distinguishes `candidate_ids`/`related_research_ids` from
+`verified_ids`/`research_ids`, `candidate_status` and `verification_status`.
+Backend latency is accumulated across lookups; candidate/quarantine time and
+verification time stay separate. `runtime_total_ms` is their sum, excluding
+primary-model, HITL and synthesis/grounding time. Loop outcome reflects the final
+synthesis/grounding outcome, not merely successful execution. Provider telemetry uses
+`model` for primary loop turns and `retrieval_verifier` only for the historical
+evidence gate. `observed.model.tool_calls` records native decisions;
+`plan`/`observed.planning`/`observed.orchestration` are deprecated null JSON
+compatibility fields, not fabricated stages. The deprecated `planner_client`
+argument aliases the primary `client`; new callers should use `client`.
+Injected synthesis/grounding/verifier clients remain supported; by default the
+primary client supplies them. HTTP/CLI response shape and dense default stay intact.
 
 The evidence outer contract remains exactly `{id, text}`. Knowledge IDs are
 `knowledge-<research_id>`; `text` is compact JSON with:
@@ -285,17 +277,20 @@ Missing optional provenance is null/empty, never invented. Projection uses an
 explicit field allowlist; scores, matched chunks and retrieval diagnostics are
 excluded. At most five unique verified records are projected, each serialized
 `text` at most 12,000 characters. Oversized records fail closed with
-`knowledge_evidence_limit` at `context`, rather than silently truncating facts.
-Projected content/provenance is quarantined again before model calls. Synthesis
+`knowledge_evidence_error` at `retrieval`, rather than silently truncating facts.
+Canonical content/provenance is quarantined before projection; all model stages
+retain trust-boundary instructions. Synthesis
 must visibly cite knowledge IDs and preserve historical date/status/scope; only
 cited evidence proceeds to grounding and the public evidence list. Provider and
 malformed-answer errors remain explicit at synthesis/grounding, with retrieval
 traces and normal provider token/latency telemetry preserved.
 
-If planning returns `ready`, deterministic tools / Research Experiment execute
+If the model selects research tools, deterministic tools / Research Experiment execute
 normally. Their `step-<n>-<tool>` evidence remains unchanged, and historical
 records are **not** substituted for or mixed into fresh execution evidence.
-`needs_input` remains clarification; retrieval abstention still continues planning.
+`request_clarification` returns `needs_input` without verification. An empty lookup
+returns related context to the model, which may still choose fresh research;
+ending the historical answer path without verified evidence returns `abstain`.
 
 ## Evaluation
 

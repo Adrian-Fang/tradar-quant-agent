@@ -43,8 +43,7 @@ class AgentMainTests(unittest.TestCase):
         self.assertIs(result, expected)
         kwargs = run.call_args.kwargs
         for name in (
-            "preflight_client",
-            "planner_client",
+            "client",
             "experiment_authoring_client",
             "hitl_client",
             "synthesis_client",
@@ -103,13 +102,16 @@ class AgentMainTests(unittest.TestCase):
 
         kwargs = run.call_args.kwargs
         self.assertIs(kwargs["retrieval_client"], client)
-        self.assertIs(kwargs["semantic_embedder"], embedder)
+        kwargs["semantic_embedder"](["query"])
+        embedder.assert_called_once_with(["query"])
 
     def test_retrieval_client_is_constructed_only_when_enabled(self):
-        with patch("agent.main.run_agent", return_value={"status": "ok"}), patch(
+        with patch("agent.main.run_agent", return_value={"status": "ok"}) as run, patch(
             "agent.main.OllamaEmbeddingClient"
         ) as ollama:
             run_request("test", provider="fixture", client=Mock(), retrieval="ollama")
+            ollama.assert_not_called()
+            run.call_args.kwargs["semantic_embedder"](["query"])
         ollama.assert_called_once_with()
 
     def test_qdrant_option_forwards_injected_backend_filters_and_verifier(self):

@@ -21,13 +21,14 @@ class KnowledgeClient:
 
     def create(self, payload):
         self.calls.append(payload)
+        if isinstance(payload["input"], list):
+            if len(self.calls) == 1:
+                return {"output": [{"type": "function_call", "name": "search_knowledge", "call_id": "lookup",
+                                    "arguments": json.dumps({"query": payload["input"][-1]["content"]})}]}
+            return {"output_text": "Use historical evidence."}
         data = json.loads(payload["input"])
-        if "runtime_metadata" in data:
-            value = {"outcome": "research", "answer": ""}
-        elif "research_record" in data:
+        if "research_record" in data:
             value = {"supported": True, "reason": "RR-010 records costs and caveats"}
-        elif "tool_schemas" in data:
-            value = {"status": "no_action", "steps": [], "reason": "verified knowledge suffices"}
         elif "user_request" in data:
             value = {"status": "success", "answer": self.answer, "evidence_ids": ["knowledge-RR-010"]}
         elif "answer" in data:
@@ -138,7 +139,7 @@ class AgentHTTPTests(unittest.IsolatedAsyncioTestCase):
         retriever.search.return_value = {"results": [record], "latency_ms": {}}
         with patch("agent.main.create_provider_client", return_value=client), patch(
             "agent.agent.KnowledgeRetriever", return_value=retriever
-        ), patch("agent.agent.run_loop") as execute, patch(
+        ), patch(
             "agent.http.asyncio.to_thread", new=self.call_in_test
         ):
             response = await self.request("POST", "/v1/research", json={
@@ -163,13 +164,12 @@ class AgentHTTPTests(unittest.IsolatedAsyncioTestCase):
         provenance = json.loads(evidence[0]["text"])["provenance"]
         self.assertEqual(provenance["source_hash"], record["source_hash"])
         self.assertEqual(json.loads(client.calls[4]["input"])["evidence"], evidence)
-        execute.assert_not_called()
 
     async def test_chinese_uat12_is_blocked_before_provider_retrieval_or_tools(self):
         client = KnowledgeClient()
         with patch("agent.main.create_provider_client", return_value=client), patch(
             "agent.agent.KnowledgeRetriever"
-        ) as retrieve, patch("agent.agent.plan_request") as plan, patch("agent.agent.run_loop") as execute, patch(
+        ) as retrieve, patch(
             "agent.http.asyncio.to_thread", new=self.call_in_test
         ):
             response = await self.request("POST", "/v1/research", json={
@@ -185,8 +185,6 @@ class AgentHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["telemetry"]["calls"], 0)
         self.assertEqual(client.calls, [])
         retrieve.assert_not_called()
-        plan.assert_not_called()
-        execute.assert_not_called()
 
     async def test_missing_or_invalid_message_is_rejected(self):
         for payload in ({}, {"message": "   "}, {"message": 42}, []):
@@ -248,9 +246,8 @@ class AgentHTTPTests(unittest.IsolatedAsyncioTestCase):
             "start_date": "2026-08-31", "end_date": "2026-08-31",
         }}
         planner = Mock(provider="fixture")
-        planner.create.return_value = {"output_text": json.dumps({
-            "status": "ready", "steps": [step], "reason": "inspect",
-        })}
+        planner.create.return_value = {"output": [{"type": "function_call", "call_id": "inspect",
+            "name": step["name"], "arguments": json.dumps(step["arguments"])}]}
         hitl = Mock(provider="fixture")
         hitl.create.return_value = {"output_text": json.dumps({
             "decision": "proceed", "approval_request": None, "reason": "safe",

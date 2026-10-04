@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
+from inspect import getattr_static
 from time import perf_counter
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -104,13 +105,14 @@ def _provider_name(client: Any) -> str | None:
     seen = set()
     while client is not None and id(client) not in seen:
         seen.add(id(client))
-        provider = getattr(client, "provider", None)
+        # Do not invoke descriptors/__getattr__: mocks can create endless wrappers.
+        provider = getattr_static(client, "provider", None)
         if isinstance(provider, str) and provider:
             return provider
         provider = names.get(type(client).__name__)
         if provider:
             return provider
-        client = getattr(client, "client", None)
+        client = getattr_static(client, "client", None)
     return None
 
 

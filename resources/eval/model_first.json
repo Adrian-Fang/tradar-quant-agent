@@ -1,0 +1,186 @@
+{
+  "cases": [
+    {
+      "id": "general_arithmetic",
+      "slice": "general",
+      "user_request": "17 加 25 等于多少？",
+      "expected": {
+        "answer_contains": [
+          "42"
+        ],
+        "route": "direct"
+      },
+      "response": {
+        "output_text": "42。"
+      }
+    },
+    {
+      "id": "general_concept",
+      "slice": "general",
+      "user_request": "什么是最大回撤？",
+      "expected": {
+        "answer_contains": [
+          "峰值",
+          "跌幅"
+        ],
+        "route": "direct"
+      },
+      "response": {
+        "output_text": "最大回撤是净值从历史峰值到随后低点的最大跌幅。"
+      }
+    },
+    {
+      "id": "runtime_model",
+      "slice": "meta",
+      "user_request": "你是什么模型？",
+      "expected": {
+        "answer_contains": [
+          "deepseek-flash"
+        ],
+        "route": "direct"
+      },
+      "response": {
+        "output_text": "当前配置的模型是 deepseek-flash。"
+      }
+    },
+    {
+      "id": "runtime_capabilities",
+      "slice": "meta",
+      "user_request": "你能做什么？",
+      "expected": {
+        "answer_contains": [
+          "因子",
+          "回测",
+          "实盘"
+        ],
+        "route": "direct"
+      },
+      "response": {
+        "output_text": "我可以检查股票池、评估因子、执行回测和有界研究实验，不执行实盘交易。"
+      }
+    },
+    {
+      "id": "ambiguous_backtest",
+      "slice": "needs_input",
+      "user_request": "帮我回测这个策略。",
+      "expected": {
+        "answer_contains": [
+          "策略",
+          "规则"
+        ],
+        "route": "request_clarification"
+      },
+      "response": {
+        "output": [
+          {
+            "type": "function_call",
+            "call_id": "fixture-first",
+            "name": "request_clarification",
+            "arguments": "{\"question\":\"请说明策略的买卖规则。\"}"
+          }
+        ]
+      }
+    },
+    {
+      "id": "historical_costs",
+      "slice": "research",
+      "user_request": "我们之前记录的默认交易成本是多少？",
+      "expected": {
+        "answer_contains": [],
+        "route": "search_knowledge"
+      },
+      "response": {
+        "output": [
+          {
+            "type": "function_call",
+            "call_id": "fixture-first",
+            "name": "search_knowledge",
+            "arguments": "{\"query\":\"我们之前记录的默认交易成本是多少？\"}"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fresh_universe",
+      "slice": "research",
+      "user_request": "看一下 2026-07-31 A 股 canonical universe，可买股票大概多少？",
+      "expected": {
+        "answer_contains": [],
+        "route": "inspect_universe"
+      },
+      "response": {
+        "output": [
+          {
+            "type": "function_call",
+            "call_id": "fixture-first",
+            "name": "inspect_universe",
+            "arguments": "{\"start_date\":\"2026-07-31\",\"end_date\":\"2026-07-31\"}"
+          }
+        ]
+      }
+    },
+    {
+      "id": "delegated_event_study",
+      "slice": "research",
+      "user_request": "研究 A 股涨停后第二天低开是否存在 5/20 日反转效应，2021-01-01 到 2026-09-30，其他合理假设自己决定。",
+      "expected": {
+        "answer_contains": [],
+        "route": "run_research_experiment"
+      },
+      "response": {
+        "output": [
+          {
+            "type": "function_call",
+            "call_id": "fixture-first",
+            "name": "run_research_experiment",
+            "arguments": "{\"spec\":{\"objective\":\"研究 A 股涨停后第二天低开是否存在 5/20 日反转效应，2021-01-01 到 2026-09-30，其他合理假设自己决定。\",\"method\":\"event study\",\"inputs\":{\"start_date\":\"2021-01-01\",\"end_date\":\"2026-09-30\",\"horizons\":[5,20]},\"assumptions\":[\"Use canonical price-limit rules.\"],\"outputs\":[\"forward returns\"]}}"
+          }
+        ]
+      }
+    },
+    {
+      "id": "historical_conclusion",
+      "slice": "research",
+      "user_request": "52 周新高 proximity 在我们之前的研究里是有效的正向 alpha 吗？",
+      "expected": {
+        "answer_contains": [],
+        "route": "search_knowledge"
+      },
+      "response": {
+        "output": [
+          {
+            "type": "function_call",
+            "call_id": "fixture-first",
+            "name": "search_knowledge",
+            "arguments": "{\"query\":\"52 周新高 proximity 在我们之前的研究里是有效的正向 alpha 吗？\"}"
+          }
+        ]
+      }
+    },
+    {
+      "id": "research_followup",
+      "slice": "research",
+      "user_request": "那 2026 年呢？",
+      "history": [
+        {
+          "role": "user",
+          "content": "重新评估 high52 在 2025 年的 H5/H20 表现。"
+        }
+      ],
+      "expected": {
+        "answer_contains": [],
+        "route": "evaluate_factor"
+      },
+      "response": {
+        "output": [
+          {
+            "type": "function_call",
+            "call_id": "fixture-first",
+            "name": "evaluate_factor",
+            "arguments": "{\"factor\":\"high52\",\"observe_start\":\"2026-01-01\",\"observe_end\":\"2026-12-31\",\"ic_horizons\":[5,20]}"
+          }
+        ]
+      }
+    }
+  ]
+}

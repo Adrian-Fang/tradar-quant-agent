@@ -134,7 +134,11 @@ def test_hydrated_qdrant_records_reach_agent_context_without_live_services(backe
     verifier = Mock(provider="fixture", model="fixture")
     verifier.create.return_value = {"output_text": json.dumps({"supported": True, "reason": "cost defaults directly support the query"})}
     planner = Mock(provider="fixture", model="fixture")
-    planner.create.return_value = {"output_text": json.dumps({"status": "no_action", "steps": [], "reason": "fixture"})}
+    planner.create.side_effect = [
+        {"output": [{"type": "function_call", "call_id": "lookup", "name": "search_knowledge",
+                     "arguments": json.dumps({"query": "What are the canonical transaction cost assumptions?"})}]},
+        {"output_text": "Use recorded costs."},
+    ]
     synthesis = Mock(provider="fixture", model="fixture")
     synthesis.create.return_value = {"output_text": json.dumps({"status": "success", "answer": "10 bp buy and 15 bp sell [knowledge-RR-010]", "evidence_ids": ["knowledge-RR-010"]})}
     grounding = Mock(provider="fixture", model="fixture")
@@ -158,13 +162,12 @@ def test_hydrated_qdrant_records_reach_agent_context_without_live_services(backe
         assert request["query"] == {"rrf": {"k": 60}} and len(request["prefetch"]) == 2
     verified = json.loads(verifier.create.call_args.args[0]["input"])["research_record"]
     assert verified["text"] == record["text"] and "score" not in verified
-    planner_input = json.loads(planner.create.call_args.args[0]["input"])["user_request"]
-    context = json.loads(planner_input.split("\n\nContext:\n", 1)[1])
-    brief = json.loads(context[1]["text"])
+    observation = json.loads(planner.create.call_args.args[0]["input"][-1]["output"])
+    brief = observation["records"][0]
     assert brief["context_type"] == "related_research_context"
     assert brief["question"] == record["question"][:240]
     assert brief["conclusion"] == record["sections"]["Conclusion"][:200]
-    assert "provenance" not in context[1] and "# Provenance" not in context[1]["text"]
+    assert "provenance" not in brief and "# Provenance" not in str(brief)
     assert result["status"] == "ok"
     assert result["observed"]["outcome"]["status"] == "success"
     assert result["research_run"] is None and result["hitl"] is None
