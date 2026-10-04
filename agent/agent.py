@@ -18,6 +18,7 @@ from .grounding.verifier import verify_answer_grounding
 from .hitl.gate import gate_action
 from .loop.runner import run_loop
 from .planning.planner import plan_request
+from .preflight import run_preflight
 from .retrieval.hybrid_retriever import KnowledgeRetriever
 from .retrieval.qdrant_store import filter_spec
 from .retrieval.relevance_verifier import verify_candidates
@@ -298,9 +299,12 @@ def _finish(
     safety: dict[str, Any] | None = None,
     telemetry: RunTelemetry | None = None,
     loop: dict[str, Any] | None = None,
+    preflight: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if telemetry is not None:
         runtime_stage = error_stage
+        if runtime_stage is None and preflight and planning is None and preflight.get("outcome") in {"direct", "needs_input"}:
+            runtime_stage = "preflight"
         if runtime_stage is None and outcome in {"needs_input", "no_action"}:
             runtime_stage = "planning"
         elif runtime_stage is None and outcome == "needs_approval":
@@ -353,6 +357,8 @@ def _finish(
     }
     if loop is not None:
         observed["loop"] = loop
+    if preflight is not None:
+        observed["preflight"] = preflight
     return {
         "status": status,
         "plan": plan,
@@ -428,6 +434,7 @@ def run_agent(
     user_request: str,
     *,
     planner_client: Any,
+    preflight_client: Any | None = None,
     experiment_authoring_client: Any | None = None,
     hitl_client: Any | None = None,
     synthesis_client: Any | None = None,
@@ -455,7 +462,7 @@ def run_agent(
     max_iterations: int = 8,
     conversation_history: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
-    """Run context/retrieval, iterative planning, HITL, execution, synthesis, and grounding."""
+    """Optional injected preflight, then the existing evidence-backed research pipeline."""
     if not isinstance(user_request, str) or not user_request.strip():
         raise ValueError("user_request must be a non-empty string")
 
@@ -480,6 +487,31 @@ def run_agent(
             safety=safety,
             telemetry=telemetry,
         )
+
+    preflight_trace = None
+    if preflight_client is not None:
+        checked = run_preflight(
+            user_request,
+            client=TelemetryClient(SafetyClient(preflight_client), telemetry, stage="preflight", model=model),
+            model=model,
+            capabilities=["historical_research", "inspect_universe", "evaluate_factor", "run_backtest", "run_research_experiment"],
+            product_boundaries=boundaries, conversation_history=conversation_history,
+        )
+        preflight_trace = checked["result"] or {"status": "error"}
+        if checked["status"] == "error" or preflight_trace["outcome"] != "research":
+            return _finish(
+                context_ids=["request_scope"], planning=None, steps=[],
+                retrieval={"status": "not_used", "research_ids": []},
+                research_run=None, grounding=None, hitl=None,
+                outcome="error" if checked["status"] == "error" else (
+                    "needs_input" if preflight_trace["outcome"] == "needs_input" else "success"
+                ),
+                status="error" if checked["status"] == "error" else "ok",
+                answer=preflight_trace.get("answer") or None,
+                evidence=[], safety=safety, telemetry=telemetry, preflight=preflight_trace,
+                error_type=checked["error_type"], error=checked["error"],
+                error_stage="preflight" if checked["status"] == "error" else None,
+            )
 
     if retrieval_backend not in {"legacy", "qdrant"}:
         raise ValueError("retrieval_backend must be legacy or qdrant")
@@ -604,7 +636,7 @@ def run_agent(
         if retrieval_result["status"] == "error":
             error = (retrieval_result.get("errors") or [{}])[0]
             return _finish(
-                context_ids=[item["id"] for item in selected],
+                context_ids=[item["id"] for item in selected], preflight=preflight_trace,
                 planning=None,
                 steps=[],
                 retrieval=retrieval_trace,
@@ -644,7 +676,7 @@ def run_agent(
             "error_type": planned["error_type"],
         }
         return _finish(
-            context_ids=[item["id"] for item in selected],
+            context_ids=[item["id"] for item in selected], preflight=preflight_trace,
             planning=planning,
             steps=[],
             retrieval=retrieval_trace,
@@ -689,7 +721,7 @@ def run_agent(
             if verified["status"] == "error":
                 error = verified["errors"][0]
                 return _finish(
-                    context_ids=[item["id"] for item in selected], planning=planning, steps=[],
+                    context_ids=[item["id"] for item in selected], planning=planning, steps=[], preflight=preflight_trace,
                     retrieval=retrieval_trace, retrieval_result=retrieval_result,
                     research_run=None, grounding=None, hitl=None, plan=plan,
                     outcome="error", status="error", error_type=error["error_type"],
@@ -699,7 +731,7 @@ def run_agent(
                 knowledge_evidence = _knowledge_records_to_evidence(verified["results"])
             except ValueError as exc:
                 return _finish(
-                    context_ids=[item["id"] for item in selected], planning=planning, steps=[],
+                    context_ids=[item["id"] for item in selected], planning=planning, steps=[], preflight=preflight_trace,
                     retrieval=retrieval_trace, retrieval_result=retrieval_result,
                     research_run=None, grounding=None, hitl=None, plan=plan,
                     outcome="error", status="error", error_type="knowledge_evidence_limit",
@@ -722,7 +754,7 @@ def run_agent(
                 safety.update({"status": "blocked", "rule": "untrusted_instruction_injection",
                                "reason": "all knowledge evidence was quarantined"})
                 return _finish(
-                    context_ids=[item["id"] for item in selected], planning=planning, steps=[],
+                    context_ids=[item["id"] for item in selected], planning=planning, steps=[], preflight=preflight_trace,
                     retrieval=retrieval_trace, retrieval_result=retrieval_result,
                     research_run=None, grounding=None, hitl=None, plan=plan,
                     outcome="blocked", safety=safety, telemetry=telemetry,
@@ -732,7 +764,7 @@ def run_agent(
                     user_request, safe_knowledge, synthesis_client=synthesis_client,
                     grounding_client=grounding_client, model=model, telemetry=telemetry,
                     conversation_history=conversation_history,
-                    context_ids=[item["id"] for item in selected], planning=planning, steps=[],
+                    context_ids=[item["id"] for item in selected], planning=planning, steps=[], preflight=preflight_trace,
                     retrieval=retrieval_trace, retrieval_result=retrieval_result,
                     research_run=None, hitl=None, plan=plan, safety=safety,
                 )
@@ -740,7 +772,7 @@ def run_agent(
             answer, capability_evidence, grounding = _capability_answer()
             evidence_ids = [item["id"] for item in capability_evidence]
             return _finish(
-                context_ids=[item["id"] for item in selected],
+                context_ids=[item["id"] for item in selected], preflight=preflight_trace,
                 planning=planning,
                 steps=[],
                 retrieval=retrieval_trace,
@@ -765,7 +797,7 @@ def run_agent(
                 telemetry=telemetry,
             )
         return _finish(
-            context_ids=[item["id"] for item in selected],
+            context_ids=[item["id"] for item in selected], preflight=preflight_trace,
             planning=planning,
             steps=[],
             retrieval=retrieval_trace,
@@ -901,7 +933,7 @@ def run_agent(
         )
     except Exception as exc:
         return _finish(
-            context_ids=[item["id"] for item in selected],
+            context_ids=[item["id"] for item in selected], preflight=preflight_trace,
             planning=planning,
             steps=_steps(run),
             retrieval=retrieval_trace,
@@ -928,7 +960,7 @@ def run_agent(
     }
     if loop_result["status"] == "error":
         return _finish(
-            context_ids=[item["id"] for item in selected],
+            context_ids=[item["id"] for item in selected], preflight=preflight_trace,
             planning=planning,
             steps=_steps(run),
             retrieval=retrieval_trace,
@@ -955,7 +987,7 @@ def run_agent(
             "message": "ResearchRun failed without a structured tool error.",
         }])[0]
         return _finish(
-            context_ids=[item["id"] for item in selected],
+            context_ids=[item["id"] for item in selected], preflight=preflight_trace,
             planning=planning,
             steps=steps,
             retrieval=retrieval_trace,
@@ -978,7 +1010,7 @@ def run_agent(
         "needs_input", "no_action", "needs_approval", "blocked"
     }:
         return _finish(
-            context_ids=[item["id"] for item in selected],
+            context_ids=[item["id"] for item in selected], preflight=preflight_trace,
             planning=planning,
             steps=steps,
             retrieval=retrieval_trace,
@@ -1020,7 +1052,7 @@ def run_agent(
             "reason": "all executable evidence was quarantined by the safety boundary",
         })
         return _finish(
-            context_ids=[item["id"] for item in selected],
+            context_ids=[item["id"] for item in selected], preflight=preflight_trace,
             planning=planning,
             steps=steps,
             retrieval=retrieval_trace,
@@ -1037,7 +1069,7 @@ def run_agent(
         user_request, bound_evidence, synthesis_client=synthesis_client,
         grounding_client=grounding_client, model=model, telemetry=telemetry,
         conversation_history=conversation_history, answer=answer, evidence=evidence,
-        context_ids=[item["id"] for item in selected],
+        context_ids=[item["id"] for item in selected], preflight=preflight_trace,
         planning=planning,
         steps=steps,
         retrieval=retrieval_trace,

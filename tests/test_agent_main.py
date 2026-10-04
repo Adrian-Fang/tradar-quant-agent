@@ -43,6 +43,7 @@ class AgentMainTests(unittest.TestCase):
         self.assertIs(result, expected)
         kwargs = run.call_args.kwargs
         for name in (
+            "preflight_client",
             "planner_client",
             "experiment_authoring_client",
             "hitl_client",

@@ -121,11 +121,14 @@ def run_request(
         )
 
     runtime_options = dict(run_options)
+    # The application always preflights; low-level injected callers may opt out.
+    preflight_client = runtime_options.pop("preflight_client", client)
     if history is not None:
         runtime_options["conversation_history"] = history
     return run_agent(
         user_request,
         planner_client=client,
+        preflight_client=preflight_client,
         experiment_authoring_client=client,
         hitl_client=client,
         synthesis_client=client,

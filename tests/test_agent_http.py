@@ -22,7 +22,9 @@ class KnowledgeClient:
     def create(self, payload):
         self.calls.append(payload)
         data = json.loads(payload["input"])
-        if "research_record" in data:
+        if "runtime_metadata" in data:
+            value = {"outcome": "research", "answer": ""}
+        elif "research_record" in data:
             value = {"supported": True, "reason": "RR-010 records costs and caveats"}
         elif "tool_schemas" in data:
             value = {"status": "no_action", "steps": [], "reason": "verified knowledge suffices"}
@@ -150,17 +152,17 @@ class AgentHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["grounding"]["labels"], ["supported"])
         self.assertIsNone(body["run_id"])
         self.assertEqual(body["steps"], [])
-        self.assertEqual(body["telemetry"]["calls"], 4)
+        self.assertEqual(body["telemetry"]["calls"], 5)
         retriever.search.assert_called_once_with(
             "我们之前记录的默认交易成本是多少？", mode="dense", limit=5,
         )
-        self.assertEqual(len(client.calls), 4)
+        self.assertEqual(len(client.calls), 5)
         # The real synthesis/grounding path receives canonical evidence, not scores.
-        evidence = json.loads(client.calls[2]["input"])["evidence"]
+        evidence = json.loads(client.calls[3]["input"])["evidence"]
         self.assertEqual(evidence[0]["id"], "knowledge-RR-010")
         provenance = json.loads(evidence[0]["text"])["provenance"]
         self.assertEqual(provenance["source_hash"], record["source_hash"])
-        self.assertEqual(json.loads(client.calls[3]["input"])["evidence"], evidence)
+        self.assertEqual(json.loads(client.calls[4]["input"])["evidence"], evidence)
         execute.assert_not_called()
 
     async def test_chinese_uat12_is_blocked_before_provider_retrieval_or_tools(self):
