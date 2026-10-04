@@ -136,7 +136,7 @@ def test_hydrated_qdrant_records_reach_agent_context_without_live_services(backe
     planner = Mock(provider="fixture", model="fixture")
     planner.create.side_effect = [
         {"output": [{"type": "function_call", "call_id": "lookup", "name": "search_knowledge",
-                     "arguments": json.dumps({"query": "What are the canonical transaction cost assumptions?"})}]},
+                     "arguments": json.dumps({"query": "What are the canonical transaction cost assumptions?", "answer_target": None})}]},
         {"output_text": "Use recorded costs."},
     ]
     synthesis = Mock(provider="fixture", model="fixture")

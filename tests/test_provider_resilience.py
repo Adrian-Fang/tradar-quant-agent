@@ -76,6 +76,27 @@ def test_openai_keeps_native_input_and_auto_choice():
     assert result["output_text"] == "42"
 
 
+@pytest.mark.parametrize("provider", ["openai", "deepseek"])
+def test_search_knowledge_nullable_target_schema_is_forwarded_to_provider(provider):
+    from agent.agent import UTILITY_SCHEMAS
+
+    schema = next(row for row in UTILITY_SCHEMAS if row["name"] == "search_knowledge")
+    sdk = SDK({"output_text": "42"} if provider == "openai" else GOOD)
+    client = OpenAIResponsesClient(api_key="test-key", sdk_client=sdk) if provider == "openai" else adapter(sdk)
+    client.create({**PAYLOAD, "tools": [schema], "tool_choice": "auto"})
+    emitted = sdk.calls[0]["tools"][0]
+    if provider == "openai":
+        assert emitted == schema and emitted["strict"] is True
+    else:
+        assert emitted["type"] == "function" and "strict" not in emitted["function"]
+        emitted = emitted["function"]
+    parameters = emitted["parameters"]
+    assert set(parameters["required"]) == set(parameters["properties"]) == {"query", "answer_target"}
+    assert parameters["additionalProperties"] is False
+    assert parameters["properties"]["answer_target"]["type"] == ["string", "null"]
+    assert parameters["properties"]["answer_target"]["maxLength"] == 2000
+
+
 def timeout():
     return APITimeoutError(request=httpx.Request("POST", "https://fixture.invalid"))
 

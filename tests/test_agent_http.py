@@ -24,7 +24,7 @@ class KnowledgeClient:
         if isinstance(payload["input"], list):
             if len(self.calls) == 1:
                 return {"output": [{"type": "function_call", "name": "search_knowledge", "call_id": "lookup",
-                                    "arguments": json.dumps({"query": payload["input"][-1]["content"]})}]}
+                                    "arguments": json.dumps({"query": payload["input"][-1]["content"], "answer_target": None})}]}
             return {"output_text": "Use historical evidence."}
         data = json.loads(payload["input"])
         if "research_record" in data:

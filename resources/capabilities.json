@@ -10,11 +10,11 @@
     },
     {
       "id": "capability-retrieval",
-      "text": "当前支持 Research Record 的 lexical/semantic retrieval、relevance verification，以及可选的 verified retrieval runtime；启用 semantic retrieval 时需要相应 embedding 配置。"
+      "text": "主模型按需调用 search_knowledge 检索历史 Research Records；Qdrant runtime 默认 dense，也支持 hybrid，legacy semantic retrieval 保留兼容。检索/安全隔离后的 related briefs 仅用于方法复用与行动选择，不是答案 evidence。全局保留最多 5 条候选（可配置更少）、6000 字符 active brief snapshot；历史答案仅对一个 answer target 做 relevance verification，默认原始请求，模糊追问由模型依据有界安全 history 显式选择 self-contained answer_target（最多 2000 字符）。检索 queries 不自动改变答案目标；只有 supported full records 进入 synthesis/grounding。需要相应索引和 embedding 配置；runtime 不自动建索引。"
     },
     {
       "id": "capability-agent-runtime",
-      "text": "Agent runtime 已支持 bounded loop、ResearchRun state、planning、HITL gate、工具执行、bounded evidence、answer synthesis、grounding 和 telemetry。"
+      "text": "Agent runtime 是 safety → primary model（tool_choice=auto）→ on-demand tools → model 的有界循环，没有独立 preflight/planner 热路径。普通问题直接回答；request_clarification 返回 needs_input；lookup_history 一次性读取最近上下文遗漏的有界 older-only history。主模型选择研究后才创建 ResearchRun；当前四个 canonical local/read-only research tools 确定性 proceed，不另调用 HITL 模型。真实研究 evidence 经 synthesis/cited-evidence grounding；保留 telemetry。"
     },
     {
       "id": "capability-data-quality-boundary",
@@ -22,7 +22,7 @@
     },
     {
       "id": "capability-product-boundaries",
-      "text": "Tradar 不执行 live trading 或 real-money orders；memory recall 不会自动注入 context，HITL approval 尚未接 executor resume，retry/replan 也不属于当前默认 runtime。"
+      "text": "Tradar 不执行 live trading 或 real-money orders；memory recall 不会自动注入 context。HITL infrastructure 保留用于未来 external/destructive/production/financial actions，并基于具体 tool/arguments 审批；approval resume 尚未接 executor。模型可根据实际 observations 继续选择有界行动；Research Experiment authoring/execution 最多一次 repair，不放宽 sandbox。"
     }
   ]
 }

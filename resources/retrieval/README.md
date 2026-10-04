@@ -215,7 +215,7 @@ Runtime strategy defaults to dense; set `retrieval_strategy="hybrid"` to retain
 hybrid retrieval. The standalone backend's hybrid default, comparison eval and
 index profile remain unchanged; selecting a runtime strategy needs no rebuild.
 
-Retrieval is a model-selected `search_knowledge(query)` tool, not an entry
+Retrieval is a model-selected `search_knowledge(query, answer_target)` tool, not an entry
 prerequisite. A generic answer or clarification makes no Qdrant/embedding/verifier
 call. The backend is constructed only when the model actually requests lookup.
 
@@ -223,14 +223,33 @@ Lookup performs canonical full-record hydration, quarantine and compact related
 brief projection. Successive lookups accumulate safe records by `research_id` in
 first-seen order; a repeated ID updates the same entry, and an empty lookup or
 `lookup_history` does not clear it. A newly quarantined version removes that ID
-from the safe pool. The pool is bounded by the tool-call budget times the
-per-lookup candidate limit; final evidence remains limited to five records.
+from the safe pool. The global pool is capped at `candidate_limit` (maximum five),
+independent of the action budget. Its active serialized brief snapshot is at most
+6,000 characters. New records displace oldest retained records if either budget
+is exceeded; duplicate IDs update in place. Older tool replies retain only a
+superseded marker, not another full brief snapshot. Full verifier records are
+limited to 12,000 serialized characters each; oversized records fail explicitly
+with a retrieval error before verification, without truncating research facts.
 The next primary model turn can choose fresh research (no
 verifier) or finish a historical answer. Only the latter runs
-`verify_candidates()` against the original question, then supported evidence →
+`verify_candidates()` against one historical answer target, then supported evidence →
 synthesis/grounding. Empty/unsupported records abstain rather than invent support.
 Infrastructure/stale-index/verifier errors remain explicit retrieval errors.
 No implicit indexing or silent fallback is introduced.
+
+Each lookup query is at most 1,000 characters; unique recent queries are retained
+within a 2,000-character diagnostic budget, not used as verification constraints.
+The answer target defaults to the exact user turn. For ambiguous historical
+follow-ups, the primary model explicitly selects one self-contained question via
+the semantically optional `answer_target` value (at most 2,000 characters), resolving only
+from bounded safe conversation context and preserving the user's subject/date/scope.
+Both fields are required by the strict tool schema; `answer_target` accepts a string
+or null. An explicit target replaces the previous target; null leaves it unchanged.
+Exploratory/method-reuse searches never automatically change the answer question;
+queries are neither conjoined nor treated as alternatives. Verifier strictness
+is unchanged. `lookup_history` returns only omitted older safe content
+(at most four messages / 2,000 content characters), once; repeat calls return an
+empty history and `already_read`. History never becomes evidence.
 
 Briefs contain identity/title, date/market/status, question (240 chars), method
 (160), conclusion (200), caveats (160), and truncation flags, not scores/provenance
@@ -240,7 +259,8 @@ projection. Briefs are model context only; only verified full records may receiv
 not the historical briefs, become evidence.
 
 Trace distinguishes `candidate_ids`/`related_research_ids` from
-`verified_ids`/`research_ids`, `candidate_status` and `verification_status`.
+`verified_ids`/`research_ids`, `candidate_status` and `verification_status`, plus
+resolved lookup queries, the final verification query and latest evicted IDs.
 Backend latency is accumulated across lookups; candidate/quarantine time and
 verification time stay separate. `runtime_total_ms` is their sum, excluding
 primary-model, HITL and synthesis/grounding time. Loop outcome reflects the final

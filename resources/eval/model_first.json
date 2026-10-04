@@ -95,7 +95,7 @@
             "type": "function_call",
             "call_id": "fixture-first",
             "name": "search_knowledge",
-            "arguments": "{\"query\":\"我们之前记录的默认交易成本是多少？\"}"
+            "arguments": "{\"query\":\"我们之前记录的默认交易成本是多少？\",\"answer_target\":null}"
           }
         ]
       }
@@ -152,7 +152,7 @@
             "type": "function_call",
             "call_id": "fixture-first",
             "name": "search_knowledge",
-            "arguments": "{\"query\":\"52 周新高 proximity 在我们之前的研究里是有效的正向 alpha 吗？\"}"
+            "arguments": "{\"query\":\"52 周新高 proximity 在我们之前的研究里是有效的正向 alpha 吗？\",\"answer_target\":null}"
           }
         ]
       }

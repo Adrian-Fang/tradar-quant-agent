@@ -17,7 +17,7 @@ from .grounding.verifier import verify_answer_grounding
 from .hitl.gate import gate_action
 from .retrieval.hybrid_retriever import KnowledgeRetriever
 from .retrieval.qdrant_store import filter_spec
-from .retrieval.relevance_verifier import verify_candidates
+from .retrieval.relevance_verifier import RECORD_EVIDENCE_FIELDS, verify_candidates
 from .retrieval.semantic_retriever import retrieve_semantic
 from .tools.calling import TOOL_SCHEMAS, _extract_function_calls
 from .tools.executor import execute_steps
@@ -25,30 +25,46 @@ from .tools.experiment import author_experiment, run_research_experiment
 
 CAPABILITY_ITEMS = load_json("capabilities.json")
 PROMPT = load_prompt("prompts/agent.md")
+KNOWLEDGE_RECORD_LIMIT = 5
+KNOWLEDGE_RECORD_CHARS = 12000
+RELATED_CONTEXT_CHARS = 6000
+LOOKUP_QUERY_CHARS = 1000
+RESOLVED_QUERY_CONTEXT_CHARS = 2000
+ANSWER_TARGET_CHARS = 2000
+READ_ONLY_RESEARCH_TOOLS = frozenset({
+    "inspect_universe", "evaluate_factor", "run_backtest", "run_research_experiment",
+})
 UTILITY_SCHEMAS = (
     {"type": "function", "name": "request_clarification",
      "description": "Ask the minimum question needed when research intent is materially incomplete.",
      "parameters": {"type": "object", "properties": {"question": {"type": "string"}},
                     "required": ["question"], "additionalProperties": False}, "strict": True},
     {"type": "function", "name": "search_knowledge",
-     "description": "Find canonical historical research. Returns related context, NOT verified answer evidence. Use for historical questions or method reuse; not for generic chat.",
-     "parameters": {"type": "object", "properties": {"query": {"type": "string"}},
-                    "required": ["query"], "additionalProperties": False}, "strict": True},
+     "description": f"Find canonical historical research using a self-contained query (at most {LOOKUP_QUERY_CHARS} characters) that resolves references from safe history. Returns related context, NOT verified answer evidence. Use for historical questions or method reuse; not for generic chat.",
+     "parameters": {"type": "object", "properties": {
+         "query": {"type": "string"},
+         "answer_target": {"type": ["string", "null"], "maxLength": ANSWER_TARGET_CHARS,
+                           "description": "Explicit selection of ONE self-contained historical question being answered, resolved from the current user turn and bounded safe conversation context. Preserve the user's subject/date/scope; do not include exploratory search objectives. Send null to keep the current answer target (initially the exact user turn)."}},
+                    "required": ["query", "answer_target"], "additionalProperties": False}, "strict": True},
     {"type": "function", "name": "lookup_history",
-     "description": "Read older conversation messages when the recent history is insufficient.",
+     "description": "Read a bounded older-only slice omitted from initial context, once per request. Use when recent history is insufficient.",
      "parameters": {"type": "object", "properties": {}, "additionalProperties": False}, "strict": True},
 )
 
 
-def _recent_history(history: list[dict[str, str]]) -> list[dict[str, str]]:
-    recent, remaining = [], 2000
+def _split_history(history: list[dict[str, str]]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Recent slice and its exact complement, including omitted message prefixes."""
+    recent, older, remaining = [], [dict(message) for message in history], 2000
     for message in reversed(history[-4:]):
         if remaining == 0:
             break
         content = message["content"][-remaining:]
         recent.append({"role": message["role"], "content": content})
+        older.pop()
+        if len(content) < len(message["content"]):
+            older.append({"role": message["role"], "content": message["content"][:-len(content)]})
         remaining -= len(content)
-    return list(reversed(recent))
+    return list(reversed(recent)), older
 
 
 def _execute_experiment(user_request, spec, run_id, client, telemetry, model):
@@ -218,10 +234,10 @@ def _knowledge_records_to_evidence(records: list[dict[str, Any]]) -> list[dict[s
         }
         text = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         # ponytail: whole records capped at 12k chars; section-preserving excerpts if the corpus grows.
-        if len(text) > 12000:
-            raise ValueError(f"knowledge record {research_id} exceeds the 12000-character evidence limit")
+        if len(text) > KNOWLEDGE_RECORD_CHARS:
+            raise ValueError(f"knowledge record {research_id} exceeds the {KNOWLEDGE_RECORD_CHARS}-character evidence limit")
         evidence.append({"id": f"knowledge-{research_id}", "text": text})
-        if len(evidence) == 5:
+        if len(evidence) == KNOWLEDGE_RECORD_LIMIT:
             break
     return evidence
 
@@ -406,14 +422,17 @@ def run_agent(
         raise ValueError("max_iterations must be a positive integer")
     telemetry = RunTelemetry()
     boundaries = product_boundaries or []
-    action = proposed_action or {"description": "Execute read-only research.", "environment": "local", "reversible": True}
-    safety = check_request_safety(user_request, action, boundaries)
+    safety = check_request_safety(user_request, proposed_action or {}, boundaries)
     run, results, calls, history = None, [], [], []
     retrieval_result, hitl_trace = None, None
     retrieval_trace = {"status": "not_used", "candidate_status": "not_used", "research_ids": []}
     # Ordered, deduplicated related context; never evidence before verification.
-    # Bounded by max_iterations lookups, each returning at most candidate_limit.
+    # The global pool and verifier input share the final evidence record cap.
     safe_candidates = {}
+    lookup_queries = []
+    historical_answer_target = user_request
+    knowledge_observation = None
+    history_lookup_used = False
     context_ids = ["request_scope"]
 
     def finish(outcome, **kwargs):
@@ -435,7 +454,7 @@ def run_agent(
         return finish("blocked")
     if retrieval_backend not in {"legacy", "qdrant"} or retrieval_strategy not in {"dense", "hybrid"}:
         raise ValueError("invalid retrieval backend or strategy")
-    if type(candidate_limit) is not int or not 1 <= candidate_limit <= 5:
+    if type(candidate_limit) is not int or not 1 <= candidate_limit <= KNOWLEDGE_RECORD_LIMIT:
         raise ValueError("candidate_limit must be between 1 and 5")
     if retrieval_backend == "legacy" and (knowledge_retriever is not None or retrieval_filters):
         raise ValueError("knowledge_retriever and retrieval_filters require the qdrant backend")
@@ -458,7 +477,9 @@ def run_agent(
     for index, message in enumerate(conversation_history or []):
         if safe_text(message["content"], f"history:{index}"):
             history.append(dict(message))
-    messages = [*_recent_history(history), {"role": "user", "content": user_request}]
+    recent, older = _split_history(history)
+    older_lookup, omitted_older = _split_history(older)
+    messages = [*recent, {"role": "user", "content": user_request}]
     for item in context_items or []:
         if safe_text(item.get("text", ""), f"context:{item['id']}"):
             messages.append({"role": "user", "content": "Unverified related context: " + item["text"][:2000]})
@@ -502,8 +523,11 @@ def run_agent(
                 bound_evidence = tool_results_to_evidence(results)
             elif retrieval_result is not None:
                 started = perf_counter()
+                # Search objectives are not constraints on the question being answered.
+                verification_query = historical_answer_target
+                retrieval_trace["verification_query"] = verification_query
                 verified = verify_candidates(
-                    user_request, list(safe_candidates.values()),
+                    verification_query, list(safe_candidates.values()),
                     client=TelemetryClient(SafetyClient(retrieval_client or client), telemetry, stage="retrieval_verifier", model=model),
                     model=model,
                 )
@@ -552,11 +576,25 @@ def run_agent(
         messages.append({"type": "function_call", "call_id": call_id, "name": name,
                          "arguments": json.dumps(arguments, ensure_ascii=False)})
         if name == "lookup_history":
-            observation = {"history": history}
+            observation = {"history": [] if history_lookup_used else older_lookup,
+                           "already_read": history_lookup_used, "truncated": bool(omitted_older)}
+            history_lookup_used = True
         elif name == "search_knowledge":
             query = arguments["query"]
             if not isinstance(query, str) or not query.strip():
                 return error("malformed_response", "search_knowledge.query must be a non-empty string", "model")
+            if len(query) > LOOKUP_QUERY_CHARS:
+                return error("malformed_response", f"search_knowledge.query exceeds {LOOKUP_QUERY_CHARS} characters", "model")
+            if arguments["answer_target"] is not None:
+                target = arguments["answer_target"]
+                if not isinstance(target, str) or not target.strip() or len(target) > ANSWER_TARGET_CHARS:
+                    return error("malformed_response", f"search_knowledge.answer_target must be a non-empty string of at most {ANSWER_TARGET_CHARS} characters", "model")
+                historical_answer_target = target.strip()
+            query = query.strip()
+            if query not in lookup_queries:
+                lookup_queries.append(query)
+            while len("\n".join(lookup_queries)) > RESOLVED_QUERY_CONTEXT_CHARS:
+                lookup_queries.pop(0)
             started = perf_counter()
             try:
                 if retrieval_backend == "qdrant":
@@ -588,7 +626,22 @@ def run_agent(
                         continue
                     candidate = dict(record)
                     candidate.pop("verification", None)
+                    # Full verifier records are bounded without truncating research facts.
+                    record_text = json.dumps({key: candidate[key] for key in RECORD_EVIDENCE_FIELDS if key in candidate},
+                                             ensure_ascii=False)
+                    if len(record_text) > KNOWLEDGE_RECORD_CHARS:
+                        raise ValueError(f"retrieval candidate {record['research_id']} exceeds the {KNOWLEDGE_RECORD_CHARS}-character verifier record limit")
                     safe_candidates[record["research_id"]] = candidate
+                evicted = []
+                while True:
+                    observation = {"context_type": "related_research_context",
+                                   "records": [_related_research_brief(record) for record in safe_candidates.values()]}
+                    if len(safe_candidates) <= candidate_limit and len(json.dumps(observation, ensure_ascii=False, sort_keys=True)) <= RELATED_CONTEXT_CHARS:
+                        break
+                    # Recent lookups displace oldest retained records; no score re-ranking.
+                    identity = next(iter(safe_candidates))
+                    safe_candidates.pop(identity)
+                    evicted.append(identity)
                 status = "ok" if safe_candidates else "abstain"
                 retrieval_result = {"status": status, "results": [], "errors": [], "rejected": [],
                                     "candidate_ids": list(dict.fromkeys([*retrieval_trace.get("candidate_ids", []), *ids])),
@@ -596,8 +649,9 @@ def run_agent(
                 retrieval_trace.update(retrieval_result, candidate_status=status, research_ids=[],
                                        quarantined_ids=list(dict.fromkeys([*retrieval_trace.get("quarantined_ids", []), *quarantined])),
                                        verified_ids=[], verification_status="not_used", candidate_limit=candidate_limit)
-                observation = {"context_type": "related_research_context",
-                               "records": [_related_research_brief(record) for record in safe_candidates.values()]}
+                retrieval_trace.update(evicted_ids=evicted, resolved_lookup_queries=list(lookup_queries),
+                                       related_context_char_limit=RELATED_CONTEXT_CHARS,
+                                       verifier_record_char_limit=KNOWLEDGE_RECORD_CHARS)
             except Exception as exc:
                 failure = {"error_type": "retrieval_error", "error": f"{type(exc).__name__}: {exc}"}
                 retrieval_result = {**(retrieval_result or {}), "status": "error", "results": [], "errors": [failure], "rejected": []}
@@ -608,14 +662,19 @@ def run_agent(
                 latency["candidate_ms"] = latency.get("candidate_ms", 0) + (perf_counter() - started) * 1000
                 retrieval_trace["runtime_total_ms"] = latency["candidate_ms"] + latency.get("verification_ms", 0)
         else:
-            # No HITL or ResearchRun exists before the model chooses research work.
-            if hitl_client is None:
-                hitl_client = client
-            gate = gate_action(
-                user_request, {**action, "tool": name}, existing_approval or {"approved": False, "scope": None},
-                boundaries, client=TelemetryClient(SafetyClient(hitl_client), telemetry, stage="hitl", model=model), model=model,
-            )
+            # Current canonical tools are local/read-only; no LLM approval round-trip.
+            if name in READ_ONLY_RESEARCH_TOOLS:
+                gate = {"status": "ok", "decision": "proceed", "approval_request": None,
+                        "reason": "Deterministic proceed for canonical local read-only research."}
+            else:
+                concrete_action = {**(proposed_action or {}), "tool": name, "arguments": arguments,
+                                   "description": schema_by_name[name]["description"]}
+                gate = gate_action(
+                    user_request, concrete_action, existing_approval or {"approved": False, "scope": None},
+                    boundaries, client=TelemetryClient(SafetyClient(hitl_client or client), telemetry, stage="hitl", model=model), model=model,
+                )
             hitl_trace = {key: gate[key] for key in ("decision", "approval_request", "reason")}
+            hitl_trace["mode"] = "deterministic_read_only" if name in READ_ONLY_RESEARCH_TOOLS else "approval_gate"
             if gate["status"] == "error":
                 return error(gate["error_type"], gate["error"], "hitl")
             if gate["decision"] != "proceed":
@@ -643,8 +702,13 @@ def run_agent(
             observation = json.loads(tool_results_to_evidence([result])[0]["text"])
             if not safe_text(json.dumps(observation, ensure_ascii=False), f"tool:{name}"):
                 return finish("blocked", evidence=[])
-        messages.append({"type": "function_call_output", "call_id": call_id,
-                         "output": json.dumps(observation, ensure_ascii=False, sort_keys=True)})
+        observation_message = {"type": "function_call_output", "call_id": call_id,
+                               "output": json.dumps(observation, ensure_ascii=False, sort_keys=True)}
+        if name == "search_knowledge":
+            if knowledge_observation is not None:
+                knowledge_observation["output"] = '{"superseded": true}'
+            knowledge_observation = observation_message
+        messages.append(observation_message)
 
     raise AssertionError("bounded model loop exhausted")
 

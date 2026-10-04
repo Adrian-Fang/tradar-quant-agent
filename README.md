@@ -6,9 +6,9 @@ Tradar 是一个正在建设中的 Agentic Quantitative Research Platform。目�
 
 ```text
 User Question
-  → Safety / Context / Retrieval
-  → Planning
-  → HITL
+  → Safety
+  → Model (tool_choice=auto) / On-demand Knowledge or History Lookup
+  → Selected Research Action / Deterministic Read-only Proceed
   → Deterministic Execution / ResearchRun
   → Bounded ToolResult Evidence
   → Answer Synthesis
@@ -59,9 +59,9 @@ Tradar 聚焦于量化研究流程的 Agent 化，不试图覆盖投资决策、
 | Related research context 与 verified answer evidence 分离（model-first runtime） | 已落地 |
 | `research/` quantitative engine、factor analysis 与 backtest | 已落地 |
 
-`agent/agent.py::run_agent` 是 safety → model（`tool_choice=auto`）→ tools → model 的有界循环。普通问题直接回答；`request_clarification` 立即澄清；研究 Tool 被选中后才进入 HITL、确定性执行与 `ResearchRun`。模型看实际有界 tool observations 决定下一步；完成研究后只用真实 ToolResult evidence 做 synthesis/cited-evidence grounding。没有独立 preflight/planner/router，也没有另一套“模型失败后转 Agent”系统。Memory store、context selector/compactor、旧 planner/loop evaluator 仍是独立能力，不在主 runtime 热路径；approval resume 未实现。
+`agent/agent.py::run_agent` 是 safety → model（`tool_choice=auto`）→ tools → model 的有界循环。普通问题直接回答；`request_clarification` 立即澄清；研究 Tool 被选中后才进入确定性执行与 `ResearchRun`。当前四个 local/read-only research tools 确定性 proceed，不另调用 HITL 模型；未来 external/destructive/production/financial actions 保留基于具体 tool/arguments 的审批 gate。模型看实际有界 tool observations 决定下一步；完成研究后只用真实 ToolResult evidence 做 synthesis/cited-evidence grounding。没有独立 preflight/planner/router，也没有另一套“模型失败后转 Agent”系统。Memory store、context selector/compactor、旧 planner/loop evaluator 仍是独立能力，不在主 runtime 热路径；approval resume 未实现。
 
-普通 chat/meta 是一次 model call、零研究阶段，不做研究 grounding；provider/格式错误显式返回，不再用另一个路由阶段掩盖。初始模型上下文只放最近最多 4 条、合计 2,000 个 history content 字符；`lookup_history` 按需读取更早的安全 history。研究 synthesis 仍可使用完整安全 history，但 history 不会成为 evidence。Telemetry 保留 static provider discovery，避免 Mock 动态 `.client` 链导致 OOM。
+普通 chat/meta 是一次 model call、零研究阶段，不做研究 grounding；provider/格式错误显式返回，不再用另一个路由阶段掩盖。初始模型上下文只放最近最多 4 条、合计 2,000 个 history content 字符；`lookup_history` 一次性读取初始 slice 未包含的 older-only 安全 history，同样最多 4 条/2,000 字符，超出会标记 truncation。研究 synthesis 仍可使用完整安全 history，但 history 不会成为 evidence。Telemetry 保留 static provider discovery，避免 Mock 动态 `.client` 链导致 OOM。
 
 Telemetry 记录 provider/model/stage、provider 返回的 usage tokens、provider latency 与完整 runtime wall-clock，并使用版本化配置估算成本，同时保留 per-stage、failure/terminal attribution。Safety 将 system/product rules 视为可信指令，将 user/retrieval/tool 内容视为不可信数据；明显不安全请求和 active indirect injection 会被确定性 block/quarantine，destructive action 仍经过 HITL。
 
@@ -71,7 +71,7 @@ CLI 知识检索默认关闭；`--retrieval qdrant` 仅暴露按需 `search_know
 
 Deterministic safety gate 同时覆盖常见英文攻击及中文直接指令：忽略规则、暴露系统提示词、读取/输出密钥或凭据、绕过安全/审批。中文引号中的分析材料及非执行性的安全讨论不视为指令；这是有界命令模式，不是通用多语言分类器。
 
-模型选择知识 lookup 后，连续 lookup 的安全记录按 `research_id` 累积去重（history lookup 不清空记录）。若模型结束历史答案路径，只有 verifier 明确接受的记录才可转换为有界 `knowledge_record` evidence，保留 `knowledge-<research_id>` 引用和文件 hash/date/status 等 provenance；不创建 ResearchRun 或执行研究。无支持则 controlled abstain，不从 related context 拼凑答案。相关记录不代表完整支持：synthesis 可 abstain/error，grounding 不支持的答案会被 block，loop trace 如实记录最终 outcome。`run_agent(client=...)` 是主接口；旧 `planner_client` 参数及 null `plan`/`observed.planning`/`observed.orchestration` 字段仅作已弃用兼容，不代表运行阶段。
+模型选择知识 lookup 后，连续 lookup 的安全记录按 `research_id` 累积去重（history lookup 不清空记录）；全局保留不超过 candidate_limit（最多 5 条），最新 brief snapshot 不超过 6,000 字符，旧 snapshots 只保留 superseded 标记。超预算时淘汰最早保留的记录，不按跨 query score 重排。每个 full verifier record 最多 12,000 字符，不截断研究事实；严格 relevance verification 仅使用一个 answer target，默认原始 turn。模糊追问由模型依据有界安全 history 显式设置 `search_knowledge.answer_target`（最多 2,000 字符），保留原始问题的 subject/date/scope；检索 queries 不自动成为答案约束。若模型结束历史答案路径，只有 verifier 明确接受的记录才可转换为有界 `knowledge_record` evidence，保留 `knowledge-<research_id>` 引用和文件 hash/date/status 等 provenance；不创建 ResearchRun 或执行研究。无支持则 controlled abstain，不从 related context 拼凑答案。相关记录不代表完整支持：synthesis 可 abstain/error，grounding 不支持的答案会被 block，loop trace 如实记录最终 outcome。`run_agent(client=...)` 是主接口；旧 `planner_client` 参数及 null `plan`/`observed.planning`/`observed.orchestration` 字段仅作已弃用兼容，不代表运行阶段。
 
 Authored Research Experiments 在隔离的只读数据/code sandbox 内执行：4 GiB 地址空间、80 秒 CPU / 90 秒 wall-time，单进程、64 个文件描述符及 64 KiB 输出限制。Worker 独立配置 DuckDB 为 1 thread / 256 MiB memory，spill 位于 `/work/cache/duckdb`（最多 256 MiB）；整个 `/work` 为 512 MiB 有界 tmpfs。共享/生产 DuckDB 默认值不变。仅 worker 通过 `TRADAR_EXPERIMENT_SANDBOX=1` 启用 bounded cold-window 复权读取：保留全历史事件累计口径，但不构建全历史 daily-factor cache；前复权按每个 symbol 窗口内最后交易日取单个 anchor，避免对宽价格结果执行全表 window。sandbox 外仍保留共享 cache rebuild / force-refresh 语义。Authoring 必须只加载需要的字段/掩码并及时释放宽表中间结果，逐个 horizon 计算/汇总/释放，不能缩短研究窗口或吞掉资源错误。超限保留结构化执行错误；这些限制不保证任意规模研究都能完成。
 
