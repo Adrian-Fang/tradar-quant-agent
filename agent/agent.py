@@ -9,7 +9,7 @@ from typing import Any
 
 from .answer.synthesizer import synthesize_answer
 from .core.contracts import ResearchRun, ToolResult
-from .core.providers import provider_error_type
+from .core.providers import ProviderError, normalize_response_output, provider_error_type
 from .core.resources import load_json, load_prompt
 from .core.safety import SafetyClient, check_request_safety, quarantine_untrusted_text
 from .core.telemetry import RunTelemetry, TelemetryClient
@@ -19,7 +19,7 @@ from .retrieval.hybrid_retriever import KnowledgeRetriever
 from .retrieval.qdrant_store import filter_spec
 from .retrieval.relevance_verifier import RECORD_EVIDENCE_FIELDS, verify_candidates
 from .retrieval.semantic_retriever import retrieve_semantic
-from .tools.calling import TOOL_SCHEMAS, _extract_function_calls
+from .tools.calling import TOOL_SCHEMAS, _extract_function_calls, normalize_tool_arguments
 from .tools.executor import execute_steps
 from .tools.experiment import author_experiment, run_research_experiment
 
@@ -48,7 +48,7 @@ UTILITY_SCHEMAS = (
                     "required": ["query", "answer_target"], "additionalProperties": False}, "strict": True},
     {"type": "function", "name": "lookup_history",
      "description": "Read a bounded older-only slice omitted from initial context, once per request. Use when recent history is insufficient.",
-     "parameters": {"type": "object", "properties": {}, "additionalProperties": False}, "strict": True},
+     "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}, "strict": True},
 )
 
 
@@ -500,7 +500,9 @@ def run_agent(
         except Exception as exc:
             return error(provider_error_type(exc), f"{type(exc).__name__}: {exc}", "model")
         try:
-            selected = _extract_function_calls(response)
+            raw_output = response.get("output", []) if isinstance(response, Mapping) else getattr(response, "output", [])
+            output_items = normalize_response_output(raw_output)
+            selected = _extract_function_calls({"output": output_items})
             text = response.get("output_text", "") if isinstance(response, Mapping) else getattr(response, "output_text", "")
             if len(selected) > 1:
                 raise ValueError("select at most one tool per turn")
@@ -512,8 +514,15 @@ def run_agent(
                 if name not in schema_by_name:
                     raise ValueError(f"unsupported model tool: {name}")
                 parameters = schema_by_name[name]["parameters"]
-                if set(arguments) - set(parameters["properties"]) or set(parameters.get("required", [])) - set(arguments):
+                missing = set(parameters.get("required", [])) - set(arguments)
+                # Legacy/non-strict callers may omit fixed-tool default fields.
+                if name in READ_ONLY_RESEARCH_TOOLS and schema_by_name[name]["strict"]:
+                    missing -= {key for key, prop in parameters["properties"].items() if "null" in prop.get("type", [])}
+                if set(arguments) - set(parameters["properties"]) or missing:
                     raise ValueError(f"invalid arguments for {name}")
+                arguments = normalize_tool_arguments(name, arguments)
+        except ProviderError as exc:
+            return error(exc.code, str(exc), "model")
         except (ValueError, TypeError) as exc:
             return error("malformed_response", str(exc), "model")
 
@@ -573,8 +582,8 @@ def run_agent(
                 run.complete(final_status="partial")
             return finish("needs_input", answer=question.strip(), evidence=[])
         call_id = call.get("call_id") or f"call-{iteration + 1}"
-        messages.append({"type": "function_call", "call_id": call_id, "name": name,
-                         "arguments": json.dumps(arguments, ensure_ascii=False)})
+        # Replay Responses output verbatim (reasoning, messages, and the call), once.
+        messages.extend(output_items)
         if name == "lookup_history":
             observation = {"history": [] if history_lookup_used else older_lookup,
                            "already_read": history_lookup_used, "truncated": bool(omitted_older)}

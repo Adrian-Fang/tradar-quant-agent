@@ -41,6 +41,30 @@ class FakeSDK:
 
 
 class ToolCallingTests(unittest.TestCase):
+    def test_all_strict_tools_obey_recursive_object_contract(self):
+        from agent.agent import UTILITY_SCHEMAS
+
+        def check(node):
+            if isinstance(node, dict):
+                types = node.get("type", [])
+                if types == "object" or isinstance(types, list) and "object" in types:
+                    self.assertIs(node.get("additionalProperties"), False)
+                    self.assertIsInstance(node.get("required"), list)
+                    self.assertEqual(set(node.get("required", [])), set(node.get("properties", {})))
+                for value in node.values():
+                    check(value)
+            elif isinstance(node, list):
+                for value in node:
+                    check(value)
+
+        for schema in (*UTILITY_SCHEMAS, *TOOL_SCHEMAS):
+            with self.subTest(tool=schema["name"]):
+                if schema["strict"]:
+                    check(schema["parameters"])
+                else:
+                    self.assertEqual(schema["name"], "run_research_experiment")
+                    self.assertEqual(schema["parameters"]["properties"]["spec"]["properties"]["inputs"], {"type": "object"})
+
     def test_schemas_are_stable_and_distinct(self):
         self.assertEqual(
             [schema["name"] for schema in TOOL_SCHEMAS],

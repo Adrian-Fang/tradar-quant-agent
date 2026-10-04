@@ -28,16 +28,16 @@ TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
             "properties": {
                 "start_date": {"type": "string", "description": "Inclusive YYYY-MM-DD date."},
                 "end_date": {"type": "string", "description": "Inclusive YYYY-MM-DD date."},
-                "exclude_st": {"type": "boolean", "description": "Apply canonical ST exclusion."},
-                "min_turnover_rate": {"type": "number", "description": "Canonical minimum turnover-rate filter."},
-                "min_listed_days": {"type": "integer", "minimum": 0, "description": "Canonical minimum listed trading days."},
+                "exclude_st": {"type": ["boolean", "null"], "description": "Apply canonical ST exclusion; null uses the default."},
+                "min_turnover_rate": {"type": ["number", "null"], "description": "Canonical minimum turnover-rate filter; null uses the default."},
+                "min_listed_days": {"type": ["integer", "null"], "minimum": 0, "description": "Canonical minimum listed trading days; null uses the default."},
                 "snapshot_dates": {
-                    "type": "array",
+                    "type": ["array", "null"],
                     "items": {"type": "string"},
                     "description": "Optional dates for membership snapshots.",
                 },
             },
-            "required": ["start_date", "end_date"],
+            "required": ["start_date", "end_date", "exclude_st", "min_turnover_rate", "min_listed_days", "snapshot_dates"],
             "additionalProperties": False,
         },
         "strict": True,
@@ -54,20 +54,20 @@ TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
         "parameters": {
             "type": "object",
             "properties": {
-                "factor": {"type": "string", "description": "Existing factor name or YAML path."},
+                "factor": {"type": "string", "description": "Canonical factor name or YAML path confined to data/factor_defs/."},
                 "observe_start": {"type": "string", "description": "Evaluation start date, YYYY-MM-DD."},
                 "observe_end": {"type": "string", "description": "Evaluation end date, YYYY-MM-DD."},
-                "warmup_days": {"type": "integer", "minimum": 0, "description": "Minimum calendar warmup before evaluation."},
+                "warmup_days": {"type": ["integer", "null"], "minimum": 0, "description": "Minimum calendar warmup before evaluation; null uses the default."},
                 "ic_horizons": {
-                    "type": "array",
+                    "type": ["array", "null"],
                     "items": {"type": "integer", "minimum": 1},
                     "description": "Forward-return horizons for IC and groups.",
                 },
-                "ic_method": {"type": "string", "enum": ["pearson", "kendall", "spearman"]},
-                "n_groups": {"type": "integer", "minimum": 2, "description": "Number of cross-sectional groups."},
-                "return_clip": {"type": ["number", "null"], "minimum": 0, "description": "Optional symmetric forward-return clip."},
+                "ic_method": {"type": ["string", "null"], "enum": ["pearson", "kendall", "spearman", None]},
+                "n_groups": {"type": ["integer", "null"], "minimum": 2, "description": "Number of cross-sectional groups; null uses the default."},
+                "return_clip": {"type": ["number", "null"], "minimum": 0, "description": "Symmetric forward-return clip; null uses the default."},
             },
-            "required": ["factor", "observe_start", "observe_end"],
+            "required": ["factor", "observe_start", "observe_end", "warmup_days", "ic_horizons", "ic_method", "n_groups", "return_clip"],
             "additionalProperties": False,
         },
         "strict": True,
@@ -78,7 +78,7 @@ TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
         "description": (
             "Run already-formed target weights through Tradar's canonical "
             "T+1 vector backtest. Inputs are existing CSV/Parquet artifacts "
-            "for weights, adjusted close, and adjusted open; optional masks "
+            "under the repo's .runtime/ directory for weights, adjusted close, and adjusted open; optional masks "
             "and benchmark returns are accepted. Do not construct factors, "
             "select assets, or call another research tool. For factor "
             "predictive power, use evaluate_factor instead."
@@ -89,14 +89,14 @@ TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
                 "target_weights": {"type": "string", "description": "Existing wide or date/symbol weight artifact path."},
                 "price_panel": {"type": "string", "description": "Existing adjusted-close panel artifact path."},
                 "open_panel": {"type": "string", "description": "Existing adjusted-open panel artifact path required for T+1."},
-                "buyable": {"type": "string", "description": "Optional canonical buyable mask artifact path."},
-                "sellable": {"type": "string", "description": "Optional canonical sellable mask artifact path."},
-                "benchmark_returns": {"type": "string", "description": "Optional benchmark daily-return artifact path."},
+                "buyable": {"type": ["string", "null"], "description": "Optional canonical buyable mask artifact path under .runtime/."},
+                "sellable": {"type": ["string", "null"], "description": "Optional canonical sellable mask artifact path under .runtime/."},
+                "benchmark_returns": {"type": ["string", "null"], "description": "Optional benchmark daily-return artifact path under .runtime/."},
                 "buy_cost": {"type": ["number", "null"], "minimum": 0, "description": "Buy cost as decimal; null uses the canonical default."},
                 "sell_cost": {"type": ["number", "null"], "minimum": 0, "description": "Sell cost as decimal; null uses the canonical default."},
-                "slippage": {"type": "number", "minimum": 0, "description": "Additional symmetric execution slippage as decimal."},
+                "slippage": {"type": ["number", "null"], "minimum": 0, "description": "Additional symmetric execution slippage as decimal; null uses the default."},
             },
-            "required": ["target_weights", "price_panel", "open_panel"],
+            "required": ["target_weights", "price_panel", "open_panel", "buyable", "sellable", "benchmark_returns", "buy_cost", "sell_cost", "slippage"],
             "additionalProperties": False,
         },
         "strict": True,
@@ -141,7 +141,8 @@ TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
             "required": ["spec"],
             "additionalProperties": False,
         },
-        "strict": True,
+        # inputs is an intentionally open research/data specification, not a fixed object.
+        "strict": False,
     },
 )
 
@@ -151,6 +152,16 @@ TOOL_FUNCTIONS = {
     "run_backtest": run_backtest,
     "run_research_experiment": run_research_experiment,
 }
+
+
+def normalize_tool_arguments(name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """Model nulls request existing defaults; direct Python calls keep their semantics."""
+    schema = next((item for item in TOOL_SCHEMAS if item["name"] == name), None)
+    if schema is None or not schema["strict"]:
+        return dict(arguments)
+    properties = schema["parameters"]["properties"]
+    return {key: value for key, value in arguments.items()
+            if value is not None or "null" not in properties.get(key, {}).get("type", [])}
 
 
 def _request_payload(user_request: str, model: str) -> dict[str, Any]:
@@ -224,7 +235,7 @@ def run_tool_calling(
         if selected_tool not in TOOL_FUNCTIONS:
             raise ValueError(f"unsupported model tool: {selected_tool}")
         tool_result = TOOL_FUNCTIONS[selected_tool](
-            **call["arguments"],
+            **normalize_tool_arguments(selected_tool, call["arguments"]),
             run_id=run.run_id,
         )
         step = run.add_step(tool_result)

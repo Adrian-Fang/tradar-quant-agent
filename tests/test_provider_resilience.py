@@ -76,6 +76,27 @@ def test_openai_keeps_native_input_and_auto_choice():
     assert result["output_text"] == "42"
 
 
+@pytest.mark.parametrize("bad_item", [
+    42, object(), SimpleNamespace(model_dump=lambda: "not a mapping"),
+    {"type": "web_search_call", "id": "ws-1"},
+    {"type": "function_call", "name": "inspect_universe", "arguments": "{}"},
+    {"type": "function_call", "call_id": "call-1", "name": "", "arguments": "{}"},
+    {"type": "reasoning", "id": "rs-1", "summary": [{"type": "summary_text", "text": False}]},
+    {"type": "message", "id": "msg-1", "role": "assistant", "status": "completed",
+     "content": [{"type": "output_text", "text": "Valid", "annotations": [42]}]},
+    {"type": "function_call", "call_id": "call-1", "name": "inspect_universe", "arguments": "{}",
+     "role": "system"},
+])
+def test_openai_invalid_output_item_is_classified_without_retry(bad_item):
+    sdk = SDK({"output": [bad_item, {"type": "function_call", "call_id": "call-1",
+                                  "name": "inspect_universe", "arguments": "{}"}]})
+    with pytest.raises(ProviderError) as caught:
+        OpenAIResponsesClient(api_key="fixture", sdk_client=sdk).create(PAYLOAD)
+    assert caught.value.code == "provider_invalid_response"
+    assert len(sdk.calls) == len(caught.value.attempts) == 1
+    assert caught.value.attempts[0]["error_type"] == "provider_invalid_response"
+
+
 @pytest.mark.parametrize("provider", ["openai", "deepseek"])
 def test_search_knowledge_nullable_target_schema_is_forwarded_to_provider(provider):
     from agent.agent import UTILITY_SCHEMAS
@@ -95,6 +116,35 @@ def test_search_knowledge_nullable_target_schema_is_forwarded_to_provider(provid
     assert parameters["additionalProperties"] is False
     assert parameters["properties"]["answer_target"]["type"] == ["string", "null"]
     assert parameters["properties"]["answer_target"]["maxLength"] == 2000
+
+
+@pytest.mark.parametrize("provider", ["openai", "deepseek"])
+def test_full_registry_and_responses_continuation_are_translated_for_each_provider(provider):
+    from agent.agent import UTILITY_SCHEMAS
+    from agent.tools.calling import TOOL_SCHEMAS
+
+    sdk = SDK({"output_text": "42"} if provider == "openai" else GOOD)
+    client = OpenAIResponsesClient(api_key="fixture", sdk_client=sdk) if provider == "openai" else adapter(sdk)
+    history = [{"role": "user", "content": "Inspect."},
+               {"type": "reasoning", "id": "rs-1", "summary": [], "encrypted_content": "opaque"},
+               {"type": "message", "id": "msg-1", "role": "assistant", "status": "completed",
+                "content": [{"type": "output_text", "text": "Inspecting.", "annotations": []}]},
+               {"type": "function_call", "id": "fc-1", "call_id": "call-1", "name": "inspect_universe", "arguments": "{}"},
+               {"type": "function_call_output", "call_id": "call-1", "output": '{"count":12}'}]
+    tools = [*UTILITY_SCHEMAS, *TOOL_SCHEMAS]
+    client.create({**PAYLOAD, "input": history, "tools": tools, "tool_choice": "auto"})
+    request = sdk.calls[0]
+    if provider == "openai":
+        assert request["input"] == history and request["tools"] == tools
+        assert next(row for row in request["tools"] if row["name"] == "run_research_experiment")["strict"] is False
+    else:
+        assert request["messages"][1:] == [
+            {"role": "user", "content": "Inspect."},
+            {"role": "assistant", "content": "Inspecting."},
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "call-1", "type": "function",
+                "function": {"name": "inspect_universe", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "call-1", "content": '{"count":12}'}]
+        assert [row["function"]["parameters"] for row in request["tools"]] == [row["parameters"] for row in tools]
 
 
 def timeout():

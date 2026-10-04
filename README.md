@@ -65,6 +65,10 @@ Tradar 聚焦于量化研究流程的 Agent 化，不试图覆盖投资决策、
 
 Telemetry 记录 provider/model/stage、provider 返回的 usage tokens、provider latency 与完整 runtime wall-clock，并使用版本化配置估算成本，同时保留 per-stage、failure/terminal attribution。Safety 将 system/product rules 视为可信指令，将 user/retrieval/tool 内容视为不可信数据；明显不安全请求和 active indirect injection 会被确定性 block/quarantine，destructive action 仍经过 HITL。
 
+OpenAI Responses 工具循环按原序回传完整 `response.output`（含 reasoning/message/function_call），再附加对应的 `function_call_output`，不重复创建 call；DeepSeek 转换时忽略 Responses-only reasoning。三个固定 research tools 与 utility tools 使用递归 strict schema：所有字段 required，optional 值通过 null 表示；research tool 的 model null 归一化为既有默认值，直接 Python 调用的显式参数语义不变。`run_research_experiment` 因 `spec.inputs` 为开放 mapping 显式 `strict=false`，仍验证 structured spec 与 sandbox 边界。
+
+Read-only tools 仍有文件边界：`evaluate_factor` 名称解析及显式 YAML 均限于 repo `data/factor_defs/`；`run_backtest` 的所有 CSV/Parquet 路径均限于 repo `.runtime/`（UAT artifacts 位于 `.runtime/agent_eval/`）。先解析 symlink/`..` 并校验边界，再探测/读取；越界返回 `path_not_allowed`。可信 programmatic DataFrame/Series inputs 保留，不改变成本或 T+1 口径。
+
 DeepSeek / OpenAI 远程 SDK 调用关闭 SDK 隐式重试：每次尝试最多 20 秒（含完整响应读取），总调用预算 45 秒，瞬态连接/超时、408/409/429/5xx 最多重试一次。无 `Retry-After` 时等待 250–500 ms；有效的服务端等待超过 1 秒时直接返回错误，不提前重试。空响应/无效 provider envelope 不重试；模型内容不符合阶段 schema 仍由原有 parser/repair contract 处理。错误区分 `provider_timeout`、`provider_rate_limit`、`provider_empty_response`、`provider_invalid_response`，其它操作失败保留 `provider_error`，不会变为语义 abstain。Telemetry 增加 attempt/retry 计数及各 attempt latency/backoff；call latency 与 per-stage `provider_latency_ms` 包含重试等待。失败尝试没有 usage 时，整次调用的累计 tokens/cost 保持 unknown，不当作零；Ollama 本地 embedding 策略不变。
 
 CLI 知识检索默认关闭；`--retrieval qdrant` 仅暴露按需 `search_knowledge`，不会在模型前访问 Qdrant/Ollama。HTTP 默认暴露同一 dense capability，history/锁/响应 shape 不变；`--retrieval-strategy hybrid` 保留 BM25/RRF，legacy `ollama`/`openai` 也按需运行。模型调用 lookup 后得到 quarantine 过的 compact related context；如果继续做新研究，跳过 verifier 且 context 不进入 evidence。若只基于历史记录结束，则 batched relevance verification → supported full-record evidence → synthesis/grounding；不支持则 abstain，基础设施/verifier 错误显式 fail closed。Runtime 不自动建索引。见 [retrieval README](resources/retrieval/README.md#agent-runtime-opt-in)。

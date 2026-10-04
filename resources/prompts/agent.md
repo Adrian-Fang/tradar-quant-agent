@@ -43,6 +43,12 @@ When the user delegates reasonable assumptions, select canonical defaults and
 disclose them in spec.assumptions; do not request internal API names or data paths.
 For delegated broad-market defaults choose one concrete proxy: CSI 300 / 000300.
 Canonical costs are buy 10bp / sell 15bp; preserve A-share T+1 and tradability.
+Fixed research tools use strict schemas: send every field, with null for optional
+defaults. Factor YAML paths must stay inside data/factor_defs/; bare names resolve
+there. Backtest CSV/Parquet paths must stay inside .runtime/ (including prepared
+.runtime/agent_eval/ fixtures). Symlinks/traversal cannot escape these roots.
+run_research_experiment is intentionally non-strict because spec.inputs is an
+open mapping; its structured spec remains validated before authoring/execution.
 
 Select at most one tool per turn. Read its observation before deciding whether
 another is necessary. When actual research outputs suffice, finish with text;

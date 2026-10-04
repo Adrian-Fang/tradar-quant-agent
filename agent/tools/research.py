@@ -25,6 +25,20 @@ from research.vector_backtest import (
 )
 
 from ..core.contracts import ToolResult, ToolStatus
+from ..core.resources import REPO_ROOT
+
+
+FACTOR_DEF_ROOT = REPO_ROOT / "data" / "factor_defs"
+ARTIFACT_ROOT = REPO_ROOT / ".runtime"
+
+
+def _confined_path(value: str | Path, root: Path, field_name: str) -> Path:
+    """Check resolved containment before exists/is_file/read operations."""
+    path = Path(value)
+    resolved = (path if path.is_absolute() else REPO_ROOT / path).resolve()
+    if not resolved.is_relative_to(root.resolve()):
+        raise PermissionError(f"{field_name} path is outside its allowed repository root")
+    return resolved
 
 
 def _normalize_date(value: Any, field_name: str) -> tuple[pd.Timestamp, str]:
@@ -495,10 +509,18 @@ def evaluate_factor(
     }
 
     try:
-        factor_path = resolve_factor_def(factor)
+        candidate = Path(factor)
+        if candidate.suffix != ".yaml":
+            candidate = FACTOR_DEF_ROOT / f"{candidate}.yaml"
+        candidate = _confined_path(candidate, FACTOR_DEF_ROOT, "factor")
+        factor_path = resolve_factor_def(candidate)
         definition = load_factor_definition(factor_path)
+    except PermissionError as exc:
+        return failure("path_not_allowed", str(exc), normalized_args=normalized_args)
     except FileNotFoundError as exc:
         return failure("unknown_factor", str(exc), normalized_args=normalized_args)
+    except (OSError, RuntimeError) as exc:
+        return failure("invalid_eval_args", f"invalid factor path: {type(exc).__name__}", normalized_args=normalized_args)
     except (TypeError, ValueError) as exc:
         return failure("invalid_eval_args", f"invalid factor definition: {exc}", normalized_args=normalized_args)
 
@@ -681,7 +703,7 @@ def _load_table_artifact(value: Any, field_name: str) -> tuple[pd.DataFrame, str
         frame = value.copy()
         source = _artifact_label(value)
     elif isinstance(value, (str, Path)):
-        path = Path(value)
+        path = _confined_path(value, ARTIFACT_ROOT, field_name)
         if not path.exists() or not path.is_file():
             raise FileNotFoundError(f"{field_name} artifact not found: {path}")
         if path.suffix.lower() == ".csv":
@@ -825,6 +847,18 @@ def run_backtest(
         return failure("invalid_backtest_args", str(exc))
 
     try:
+        # Validate every supplied path before reading even the first valid artifact.
+        for field, value in (("target_weights", target_weights), ("price_panel", price_panel),
+                             ("open_panel", open_panel), ("buyable", buyable),
+                             ("sellable", sellable), ("benchmark_returns", benchmark_returns)):
+            if isinstance(value, (str, Path)):
+                _confined_path(value, ARTIFACT_ROOT, field)
+    except PermissionError as exc:
+        return failure("path_not_allowed", str(exc), normalized_args=normalized_args)
+    except (ValueError, OSError, RuntimeError) as exc:
+        return failure("invalid_backtest_args", f"invalid artifact path: {type(exc).__name__}", normalized_args=normalized_args)
+
+    try:
         weights, weights_source = _load_table_artifact(target_weights, "target_weights")
         close, close_source = _load_table_artifact(price_panel, "price_panel")
         opens, open_source = _load_table_artifact(open_panel, "open_panel")
@@ -904,6 +938,8 @@ def run_backtest(
             },
             timing={"elapsed_ms": round((time.perf_counter() - started) * 1000, 3)},
         )
+    except PermissionError as exc:
+        return failure("path_not_allowed", str(exc), normalized_args=normalized_args)
     except (FileNotFoundError, OSError, pd.errors.EmptyDataError) as exc:
         return failure(
             "missing_data",

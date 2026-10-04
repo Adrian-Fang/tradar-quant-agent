@@ -18,6 +18,8 @@ from urllib import request
 
 import httpx
 from openai import AsyncOpenAI, OpenAI as SyncOpenAI, APIConnectionError, APIResponseValidationError, APITimeoutError, RateLimitError
+from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseReasoningItem
+from pydantic import ValidationError
 
 _ASYNC_SDK_TYPE = AsyncOpenAI
 
@@ -314,6 +316,8 @@ def _deepseek_messages(value):
         return [{"role": "user", "content": value}]
     messages = []
     for item in value:
+        if item.get("type") == "reasoning":
+            continue  # Opaque Responses-only state is not a Chat Completions message.
         if item.get("type") == "function_call":
             messages.append({"role": "assistant", "content": None, "tool_calls": [{
                 "id": item["call_id"], "type": "function",
@@ -321,7 +325,12 @@ def _deepseek_messages(value):
             }]})
         elif item.get("type") == "function_call_output":
             messages.append({"role": "tool", "tool_call_id": item["call_id"], "content": item["output"]})
-        else:
+        elif item.get("type") == "message":
+            content = "\n".join(block.get("text", block.get("refusal", "")) for block in item.get("content", [])
+                                if block.get("type") in {"output_text", "refusal"})
+            if content:
+                messages.append({"role": item["role"], "content": content})
+        elif "role" in item and "content" in item:
             messages.append({"role": item["role"], "content": item["content"]})
     return messages
 
@@ -330,6 +339,37 @@ def _bounded_timeout(timeout):
     if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("provider timeout must be a positive finite number")
     return min(float(timeout), ATTEMPT_TIMEOUT_SECONDS)
+
+
+def normalize_response_output(output):
+    """Validate replayable items without adding defaults or dropping opaque state."""
+    if not isinstance(output, list):
+        raise ProviderError("provider_invalid_response", "provider output must be a list")
+    models = {"reasoning": ResponseReasoningItem, "message": ResponseOutputMessage,
+              "function_call": ResponseFunctionToolCall}
+    normalized = []
+    for index, value in enumerate(output):
+        try:
+            item = dict(value) if isinstance(value, Mapping) else value.model_dump()
+        except Exception as exc:
+            raise ProviderError("provider_invalid_response", f"provider output item {index} is not a mapping") from exc
+        if not isinstance(item, Mapping):
+            raise ProviderError("provider_invalid_response", f"provider output item {index} is not a mapping")
+        item = dict(item)
+        kind = item.get("type")
+        if not isinstance(kind, str) or kind not in models:
+            raise ProviderError("provider_invalid_response", f"provider output item {index} has an unsupported type")
+        try:
+            # The pinned SDK/Pydantic schemas validate nested message content too.
+            models[kind].model_validate(item, strict=True, extra="forbid")
+            required_strings = ("call_id", "name", "arguments") if kind == "function_call" else ("id",)
+            if any(not item[field].strip() for field in required_strings):
+                raise ValueError("empty required field")
+            json.dumps(item, allow_nan=False)
+        except (ValidationError, ValueError, TypeError) as exc:
+            raise ProviderError("provider_invalid_response", f"provider output item {index} has an invalid {kind} shape") from exc
+        normalized.append(item)
+    return normalized
 
 
 def _normalize_responses(response):
@@ -347,6 +387,7 @@ def _normalize_responses(response):
         raise ProviderError("provider_invalid_response", "provider output fields are invalid")
     if not output and not text.strip():
         raise ProviderError("provider_empty_response", "provider returned no output")
+    normalized["output"] = normalize_response_output(output)
     return normalized
 
 
@@ -379,7 +420,7 @@ def _normalize_deepseek(response):
         })
     if not output and not text.strip():
         raise ProviderError("provider_empty_response", "provider returned no text or tool calls")
-    normalized = {"output": output, "output_text": text}
+    normalized = {"output": normalize_response_output(output), "output_text": text}
     usage = _field(response, "usage")
     if usage is not None:
         normalized["usage"] = usage
@@ -392,5 +433,6 @@ __all__ = [
     "OpenAIEmbeddingClient",
     "OpenAIResponsesClient",
     "ProviderError",
+    "normalize_response_output",
     "provider_error_type",
 ]

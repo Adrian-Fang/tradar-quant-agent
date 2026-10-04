@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
 import pandas as pd
+import pytest
 
 from agent.core.contracts import ResearchRun, ToolResult
-from agent.tools.research import evaluate_factor, inspect_universe, run_backtest
+from agent.tools.calling import TOOL_SCHEMAS, normalize_tool_arguments
+from agent.tools.research import ARTIFACT_ROOT, FACTOR_DEF_ROOT, evaluate_factor, inspect_universe, run_backtest
 from research.factor_analyzer import FactorAnalyzer
 from research.metrics import calc_metrics
 from research.vector_backtest import BacktestConfig, run_backtest as canonical_run_backtest
@@ -117,19 +120,12 @@ class AgentToolContractTests(unittest.TestCase):
             columns=columns,
         )
         eligible = pd.DataFrame(True, index=dates, columns=columns)
-        definition = {
-            "name": "mock_factor",
-            "description": "test",
-            "steps": [{"field": "close"}],
-        }
-        with patch("agent.tools.research.resolve_factor_def", return_value="mock.yaml"), \
-             patch("agent.tools.research.load_factor_definition", return_value=definition), \
-             patch("agent.tools.research.required_warmup_days", return_value=7), \
+        with patch("agent.tools.research.required_warmup_days", return_value=7), \
              patch("agent.tools.research.load_factor_panels", return_value=({"close": prices}, {})), \
              patch("agent.tools.research.evaluate_factor_def_on_panels", return_value=factor), \
              patch("agent.tools.research.panel.eligible_universe_mask", return_value=eligible):
             result = evaluate_factor(
-                "mock_factor",
+                "high52",
                 "2026-01-02",
                 "2026-01-08",
                 warmup_days=120,
@@ -234,7 +230,8 @@ class AgentToolContractTests(unittest.TestCase):
         weights = pd.DataFrame({"A": [1.0, 0.0]}, index=dates)
         close = pd.DataFrame({"A": [100.0, 101.0]}, index=dates)
         opens = pd.DataFrame({"A": [100.0, 100.5]}, index=dates)
-        with TemporaryDirectory() as directory:
+        ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(dir=ARTIFACT_ROOT) as directory:
             paths = {}
             for name, frame in {"weights": weights, "close": close, "open": opens}.items():
                 path = f"{directory}/{name}.csv"
@@ -245,6 +242,103 @@ class AgentToolContractTests(unittest.TestCase):
             )
         self.assertEqual(result.status, "success")
         self.assertEqual(result.provenance["input_artifacts"]["target_weights"], paths["weights"])
+
+
+@pytest.mark.parametrize("tool", ["inspect_universe", "evaluate_factor", "run_backtest"])
+def test_null_model_options_use_existing_canonical_defaults(tool):
+    dates = pd.date_range("2026-01-05", periods=3)
+    frame = pd.DataFrame({"A": [1.0, 1.0, 0.0]}, index=dates)
+    required = {
+        "inspect_universe": {"start_date": "2026-01-05", "end_date": "2026-01-07"},
+        "evaluate_factor": {"factor": "high52", "observe_start": "2026-01-05", "observe_end": "2026-01-07"},
+        "run_backtest": {"target_weights": frame, "price_panel": frame + 100, "open_panel": frame + 100},
+    }[tool]
+    schema = next(row for row in TOOL_SCHEMAS if row["name"] == tool)
+    arguments = {key: None for key in schema["parameters"]["properties"]}
+    arguments.update(required)
+    with patch("agent.tools.research.panel.eligible_universe_mask", side_effect=FileNotFoundError("fixture")), \
+            patch("agent.tools.research.load_factor_panels", side_effect=FileNotFoundError("fixture")):
+        result = {"inspect_universe": inspect_universe, "evaluate_factor": evaluate_factor,
+                  "run_backtest": run_backtest}[tool](**normalize_tool_arguments(tool, arguments))
+    expected = {
+        "inspect_universe": {"exclude_st": True, "min_turnover_rate": 1.0, "min_listed_days": 20, "snapshot_dates": []},
+        "evaluate_factor": {"warmup_days": 120, "ic_horizons": [1, 5, 10, 20], "ic_method": "spearman", "n_groups": 5, "return_clip": 0.5},
+        "run_backtest": {"buy_cost": 0.001, "sell_cost": 0.0015, "slippage": 0.0, "t_plus_1": True},
+    }[tool]
+    assert all(result.normalized_args[key] == value for key, value in expected.items())
+    assert result.status == ("success" if tool == "run_backtest" else "error")
+    if tool != "run_backtest":
+        assert result.errors[0]["code"] == "missing_data"
+
+
+@pytest.mark.parametrize("attack", ["external", "traversal", "symlink", "bare_traversal"])
+def test_factor_paths_cannot_escape_the_canonical_root_before_probing(tmp_path, attack):
+    ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(dir=FACTOR_DEF_ROOT) as directory:
+        external = tmp_path / "secret.yaml"
+        external.write_text("private fixture", encoding="utf-8")
+        alias = Path(directory) / "alias.yaml"
+        alias.symlink_to(external)
+        factor = {"external": external, "traversal": FACTOR_DEF_ROOT / ".." / "secret.yaml",
+                  "symlink": alias, "bare_traversal": "../../secret"}[attack]
+        with patch.object(Path, "exists", side_effect=AssertionError("must not probe")), \
+                patch("agent.tools.research.load_factor_definition", side_effect=AssertionError("must not read")):
+            result = evaluate_factor(factor, "2026-01-05", "2026-01-07")
+    assert result.status == "error" and result.errors[0]["code"] == "path_not_allowed"
+    assert "private fixture" not in result.to_json()
+
+
+def test_canonical_explicit_yaml_path_evaluates_successfully():
+    dates = pd.date_range("2026-01-05", periods=6)
+    prices = pd.DataFrame({"A": [100 + day for day in range(6)], "B": [101 + day * 2 for day in range(6)]}, index=dates)
+    factor = prices.rank(axis=1)
+    with patch("agent.tools.research.load_factor_panels", return_value=({"close": prices}, {})), \
+            patch("agent.tools.research.evaluate_factor_def_on_panels", return_value=factor), \
+            patch("agent.tools.research.panel.eligible_universe_mask", return_value=prices.notna()):
+        result = evaluate_factor(FACTOR_DEF_ROOT / "high52.yaml", "2026-01-05", "2026-01-10", ic_horizons=[1], n_groups=2)
+    assert result.status == "success"
+    assert result.result["factor"]["source_path"] == str((FACTOR_DEF_ROOT / "high52.yaml").resolve())
+
+
+@pytest.mark.parametrize("field", ["target_weights", "price_panel", "open_panel", "buyable", "sellable", "benchmark_returns"])
+@pytest.mark.parametrize("attack", ["external", "traversal", "symlink"])
+def test_all_backtest_paths_are_confined_before_any_read_or_probe(tmp_path, field, attack):
+    ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(dir=ARTIFACT_ROOT) as directory:
+        external = tmp_path / "secret.csv"
+        external.write_text("private fixture", encoding="utf-8")
+        alias = Path(directory) / "alias.csv"
+        alias.symlink_to(external)
+        value = {"external": external, "traversal": ARTIFACT_ROOT / ".." / "secret.csv", "symlink": alias}[attack]
+        frame = pd.DataFrame({"A": [1.0, 0.0]}, index=pd.date_range("2026-01-05", periods=2))
+        arguments = {"target_weights": frame, "price_panel": frame + 100, "open_panel": frame + 100, field: value}
+        with patch.object(Path, "exists", side_effect=AssertionError("must not probe")), \
+                patch.object(Path, "is_file", side_effect=AssertionError("must not probe")), \
+                patch("pandas.read_csv", side_effect=AssertionError("must not read")), \
+                patch("pandas.read_parquet", side_effect=AssertionError("must not read")):
+            result = run_backtest(**arguments)
+    assert result.status == "error" and result.errors[0]["code"] == "path_not_allowed"
+    assert "private fixture" not in result.to_json()
+
+
+@pytest.mark.parametrize("extension", ["csv", "parquet"])
+def test_backtest_runtime_artifacts_and_trusted_series_keep_canonical_semantics(extension):
+    ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+    dates = pd.date_range("2026-01-05", periods=3)
+    weights = pd.DataFrame({"A": [1.0, 1.0, 0.0]}, index=dates)
+    close = pd.DataFrame({"A": [100.0, 101.0, 102.0]}, index=dates)
+    benchmark = pd.Series([0.0, 0.01, 0.01], index=dates)
+    with TemporaryDirectory(dir=ARTIFACT_ROOT) as directory:
+        paths = []
+        for name, frame in (("weights", weights), ("close", close), ("open", close)):
+            path = Path(directory) / f"{name}.{extension}"
+            (frame.to_csv if extension == "csv" else frame.to_parquet)(path)
+            paths.append(path)
+        from_files = run_backtest(paths[0], str(paths[1]), open_panel=paths[2], benchmark_returns=benchmark)
+        from_frames = run_backtest(weights, close, open_panel=close, benchmark_returns=benchmark)
+    assert from_files.status == from_frames.status == "success"
+    assert from_files.result == from_frames.result
+    assert from_files.result["config"] == {"buy_cost": 0.001, "sell_cost": 0.0015, "slippage": 0.0, "t_plus_1": True}
 
 
 if __name__ == "__main__":

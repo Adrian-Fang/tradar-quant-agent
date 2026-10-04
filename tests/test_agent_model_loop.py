@@ -83,6 +83,59 @@ def test_entry_eval_cases_remain_a_single_fixture_eval_without_live_execution():
     assert all(row["provider_calls"] == 1 for row in rows)
 
 
+@pytest.mark.parametrize("sdk_items", [False, True])
+def test_responses_reasoning_message_and_call_replay_once_before_tool_output(sdk_items):
+    from types import SimpleNamespace
+    from agent.core.providers import OpenAIResponsesClient
+    from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseReasoningItem
+
+    output = [
+        {"type": "reasoning", "id": "rs-1", "summary": [], "encrypted_content": "opaque-state"},
+        {"type": "message", "id": "msg-1", "role": "assistant", "status": "completed",
+         "content": [{"type": "output_text", "text": "Inspecting the universe.", "annotations": []}]},
+        {"type": "function_call", "id": "fc-1", "call_id": "call-1", "name": "inspect_universe",
+         "status": "completed", "arguments": json.dumps({"start_date": "2026-07-31", "end_date": "2026-07-31",
+             "exclude_st": None, "min_turnover_rate": None, "min_listed_days": None, "snapshot_dates": None})},
+    ]
+    if sdk_items:
+        models = [ResponseReasoningItem, ResponseOutputMessage, ResponseFunctionToolCall]
+        output = [model.model_validate(item) for model, item in zip(models, output)]
+    expected_output = [item.model_dump() if sdk_items else item for item in output]
+    sdk = Client({"output": output}, {"output_text": "Done."})
+    provider = OpenAIResponsesClient(api_key="fixture", sdk_client=SimpleNamespace(
+        responses=SimpleNamespace(create=lambda **payload: sdk.create(payload))))
+    tool = Mock(return_value=ToolResult(tool_name="inspect_universe", result={"count": 12}))
+    with patch("agent.tools.executor.TOOL_FUNCTIONS", {"inspect_universe": tool}):
+        result = run_agent("Inspect the universe.", client=provider, **answer_clients("step-1-inspect_universe"))
+    assert result["status"] == "ok" and result["grounding"]["fully_grounded"]
+    continuation = sdk.calls[1]["input"]
+    assert continuation[1:-1] == expected_output
+    assert continuation[-1]["type"] == "function_call_output" and continuation[-1]["call_id"] == "call-1"
+    assert sum(row.get("type") == "function_call" for row in continuation) == 1
+    assert tool.call_args.kwargs["start_date"] == "2026-07-31"
+    assert all(key not in tool.call_args.kwargs for key in ("exclude_st", "min_turnover_rate", "min_listed_days", "snapshot_dates"))
+
+
+@pytest.mark.parametrize("bad_item", [
+    42, "invalid", object(),
+    {"type": "unknown"},
+    {"type": "message", "id": "msg-1", "role": "system", "status": "completed", "content": []},
+    {"type": "message", "id": "msg-1", "role": "assistant", "status": "completed",
+     "content": [{"type": "output_text", "text": 42, "annotations": []}]},
+    {"type": "reasoning", "id": "rs-1", "summary": "invalid"},
+])
+def test_invalid_replay_item_beside_valid_call_fails_before_dispatch(bad_item):
+    response = research_call()
+    response["output"].insert(0, bad_item)
+    client = Client(response)
+    with patch("agent.agent.execute_steps") as execute:
+        result = run_agent("Inspect the universe.", client=client)
+    assert result["status"] == "error" and result["error_type"] == "provider_invalid_response"
+    assert result["error_stage"] == "model" and result["research_run"] is None
+    assert len(client.calls) == 1 and result["error"]
+    execute.assert_not_called()
+
+
 def test_clarification_stops_without_approval_or_retrieval():
     client, retriever = Client(call("request_clarification", question="策略买卖规则是什么？")), Mock()
     result = run_request("帮我回测这个策略。", provider="fixture", client=client,

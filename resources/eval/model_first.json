@@ -114,7 +114,7 @@
             "type": "function_call",
             "call_id": "fixture-first",
             "name": "inspect_universe",
-            "arguments": "{\"start_date\":\"2026-07-31\",\"end_date\":\"2026-07-31\"}"
+            "arguments": "{\"start_date\":\"2026-07-31\",\"end_date\":\"2026-07-31\",\"exclude_st\":null,\"min_turnover_rate\":null,\"min_listed_days\":null,\"snapshot_dates\":null}"
           }
         ]
       }
@@ -177,7 +177,7 @@
             "type": "function_call",
             "call_id": "fixture-first",
             "name": "evaluate_factor",
-            "arguments": "{\"factor\":\"high52\",\"observe_start\":\"2026-01-01\",\"observe_end\":\"2026-12-31\",\"ic_horizons\":[5,20]}"
+            "arguments": "{\"factor\":\"high52\",\"observe_start\":\"2026-01-01\",\"observe_end\":\"2026-12-31\",\"ic_horizons\":[5,20],\"warmup_days\":null,\"ic_method\":null,\"n_groups\":null,\"return_clip\":null}"
           }
         ]
       }
