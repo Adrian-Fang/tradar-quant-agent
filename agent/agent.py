@@ -36,7 +36,7 @@ READ_ONLY_RESEARCH_TOOLS = frozenset({
 })
 UTILITY_SCHEMAS = (
     {"type": "function", "name": "request_clarification",
-     "description": "Ask the minimum question needed when research intent is materially incomplete.",
+     "description": "Return needs_input and stop. Batch all currently identifiable materially missing business inputs in one clarification, not one field per turn; for unresolved 'this strategy', ask its executable rules plus needed universe/period/rebalance inputs. State applicable canonical defaults and allow override, rather than requiring their values. Never ask for internal CSV/panel paths or repo/API names, or clarify in plain text.",
      "parameters": {"type": "object", "properties": {"question": {"type": "string"}},
                     "required": ["question"], "additionalProperties": False}, "strict": True},
     {"type": "function", "name": "search_knowledge",

@@ -60,7 +60,8 @@ def run_case(case, *, client=None):
     summary = telemetry.envelope()["summary"]
     return {"case": case["id"], "route": route,
             "case_pass": error_type is None and route == expected["route"] and
-                         all(text in answer for text in expected["answer_contains"]),
+                         all(text in answer for text in expected["answer_contains"]) and
+                         all(text not in answer for text in expected.get("answer_excludes", [])),
             "provider_calls": summary["calls"], "total_tokens": summary["total_tokens"],
             "input_tokens": summary["input_tokens"], "output_tokens": summary["output_tokens"],
             "estimated_cost": summary["estimated_cost"], "latency_ms": summary["provider_latency_ms"],

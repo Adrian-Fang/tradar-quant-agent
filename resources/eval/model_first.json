@@ -76,9 +76,27 @@
             "type": "function_call",
             "call_id": "fixture-first",
             "name": "request_clarification",
-            "arguments": "{\"question\":\"请说明策略的买卖规则。\"}"
+            "arguments": "{\"question\":\"你指的是哪个策略？请说明买卖/持有和仓位规则、股票池、回测起止日期，以及适用的调仓频率。A股比较基准默认沪深300，交易成本默认买入10bp/卖出15bp，可覆盖。\"}"
           }
         ]
+      }
+    },
+    {
+      "id": "ambiguous_backtest_this_strategy",
+      "slice": "needs_input",
+      "user_request": "帮我回测一下这个策略。",
+      "expected": {
+        "answer_contains": ["策略", "规则", "股票池", "日期", "频率", "默认", "10", "15"],
+        "answer_excludes": ["CSV", "csv", "路径", "repo", "API"],
+        "route": "request_clarification"
+      },
+      "response": {
+        "output": [{
+          "type": "function_call",
+          "call_id": "fixture-first",
+          "name": "request_clarification",
+          "arguments": "{\"question\":\"你指的是哪个策略？请说明买卖/持有和仓位规则、股票池、回测起止日期，以及适用的调仓频率。A股比较基准默认沪深300，交易成本默认买入10bp/卖出15bp，可覆盖。\"}"
+        }]
       }
     },
     {

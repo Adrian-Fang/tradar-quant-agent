@@ -136,15 +136,38 @@ def test_invalid_replay_item_beside_valid_call_fails_before_dispatch(bad_item):
     execute.assert_not_called()
 
 
-def test_clarification_stops_without_approval_or_retrieval():
-    client, retriever = Client(call("request_clarification", question="策略买卖规则是什么？")), Mock()
-    result = run_request("帮我回测这个策略。", provider="fixture", client=client,
-                         retrieval="qdrant", knowledge_retriever=retriever)
+@pytest.mark.parametrize("user_request", ["帮我回测这个策略。", "帮我回测一下这个策略。"])
+def test_clarification_stops_without_approval_or_retrieval(user_request):
+    from agent.model_eval import CASES
+
+    case = next(case for case in CASES if case["id"] == "ambiguous_backtest_this_strategy")
+    question = json.loads(case["response"]["output"][0]["arguments"])["question"]
+    client, retriever = Client(call("request_clarification", question=question)), Mock()
+    with patch("agent.agent.execute_steps", side_effect=AssertionError("strategy is unresolved")), \
+            patch("agent.agent._execute_experiment", side_effect=AssertionError("strategy is unresolved")):
+        result = run_request(user_request, provider="fixture", client=client,
+                             retrieval="qdrant", knowledge_retriever=retriever)
     assert result["observed"]["outcome"]["status"] == "needs_input"
-    assert result["answer"] == "策略买卖规则是什么？"
+    assert result["answer"] == question
     assert result["research_run"] is result["hitl"] is None
+    assert result["grounding"] is None and result["evidence"] == []
     assert len(client.calls) == 1
+    assert [row["stage"] for row in result["telemetry"]["calls"]] == ["model"]
     retriever.search.assert_not_called()
+
+
+@pytest.mark.parametrize("response", [
+    {"output_text": "请说明策略规则、股票池、回测日期及调仓频率；默认成本买入10bp/卖出15bp。"},
+    call("request_clarification", question="你指的是哪个策略？请说明买卖规则。"),
+    call("request_clarification", question="请说明策略规则、股票池、日期、调仓频率、基准和成本。"),
+    call("request_clarification", question="请说明策略规则、股票池、日期、调仓频率；默认买入10bp/卖出15bp。请提供CSV路径和API名称。"),
+])
+def test_ambiguous_backtest_eval_rejects_plain_text_serial_asks_or_internal_inputs(response):
+    from agent.model_eval import CASES, run_case
+
+    case = next(case for case in CASES if case["id"] == "ambiguous_backtest_this_strategy")
+    row = run_case(case, client=Client(response))
+    assert not row["case_pass"] and row["provider_calls"] == 1
 
 
 @pytest.mark.parametrize("single_long_message", [False, True])
