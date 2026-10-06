@@ -68,6 +68,7 @@
           "策略",
           "规则"
         ],
+        "answer_excludes": ["默认沪深300"],
         "route": "request_clarification"
       },
       "response": {
@@ -76,7 +77,7 @@
             "type": "function_call",
             "call_id": "fixture-first",
             "name": "request_clarification",
-            "arguments": "{\"question\":\"你指的是哪个策略？请说明买卖/持有和仓位规则、股票池、回测起止日期，以及适用的调仓频率。A股比较基准默认沪深300，交易成本默认买入10bp/卖出15bp，可覆盖。\"}"
+            "arguments": "{\"question\":\"你指的是哪个策略？请说明买卖/持有和仓位规则、股票池、回测起止日期，以及适用的调仓频率。如需基准比较，请说明偏好的基准；未指定时不使用基准。交易成本默认买入10bp/卖出15bp，可覆盖。\"}"
           }
         ]
       }
@@ -87,7 +88,7 @@
       "user_request": "帮我回测一下这个策略。",
       "expected": {
         "answer_contains": ["策略", "规则", "股票池", "日期", "频率", "默认", "10", "15"],
-        "answer_excludes": ["CSV", "csv", "路径", "repo", "API"],
+        "answer_excludes": ["CSV", "csv", "路径", "repo", "API", "默认沪深300"],
         "route": "request_clarification"
       },
       "response": {
@@ -95,7 +96,7 @@
           "type": "function_call",
           "call_id": "fixture-first",
           "name": "request_clarification",
-          "arguments": "{\"question\":\"你指的是哪个策略？请说明买卖/持有和仓位规则、股票池、回测起止日期，以及适用的调仓频率。A股比较基准默认沪深300，交易成本默认买入10bp/卖出15bp，可覆盖。\"}"
+          "arguments": "{\"question\":\"你指的是哪个策略？请说明买卖/持有和仓位规则、股票池、回测起止日期，以及适用的调仓频率。如需基准比较，请说明偏好的基准；未指定时不使用基准。交易成本默认买入10bp/卖出15bp，可覆盖。\"}"
         }]
       }
     },

@@ -161,6 +161,7 @@ def test_clarification_stops_without_approval_or_retrieval(user_request):
     call("request_clarification", question="你指的是哪个策略？请说明买卖规则。"),
     call("request_clarification", question="请说明策略规则、股票池、日期、调仓频率、基准和成本。"),
     call("request_clarification", question="请说明策略规则、股票池、日期、调仓频率；默认买入10bp/卖出15bp。请提供CSV路径和API名称。"),
+    call("request_clarification", question="请说明策略规则、股票池、日期、调仓频率。A股比较基准默认沪深300，交易成本默认买入10bp/卖出15bp，可覆盖。"),
 ])
 def test_ambiguous_backtest_eval_rejects_plain_text_serial_asks_or_internal_inputs(response):
     from agent.model_eval import CASES, run_case
