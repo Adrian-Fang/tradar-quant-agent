@@ -26,12 +26,21 @@ def _runtime_view(result: dict[str, Any]) -> dict[str, Any]:
         run_id = getattr(research_run, "run_id", None)
     outcome = observed.get("outcome") or {}
     telemetry = result.get("telemetry") or {}
+    retrieval = observed.get("retrieval")
     return {
         "status": result.get("status"),
         "outcome": outcome.get("status"),
         "answer": result.get("answer"),
         "run_id": run_id,
         "steps": observed.get("steps", []),
+        "model": {"tool_calls": [
+            {"name": call.get("name"), "arguments": call.get("arguments")}
+            for call in (observed.get("model") or {}).get("tool_calls", [])
+        ]},
+        "retrieval": {key: retrieval[key] for key in (
+            "status", "candidate_status", "candidate_ids", "related_research_ids",
+            "verification_status", "verified_ids", "research_ids",
+        ) if key in retrieval} if retrieval is not None else None,
         "loop": observed.get("loop"),
         "grounding": observed.get("grounding"),
         "telemetry": telemetry.get("summary") if isinstance(telemetry, dict) else None,

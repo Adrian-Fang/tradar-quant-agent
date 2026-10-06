@@ -88,6 +88,8 @@ class AgentHTTPTests(unittest.IsolatedAsyncioTestCase):
             "answer": "A concise answer.",
             "run_id": "run-1",
             "steps": [{"name": "inspect_universe", "status": "success"}],
+            "model": {"tool_calls": []},
+            "retrieval": None,
             "loop": {"iterations": 1},
             "grounding": {"fully_grounded": True},
             "telemetry": {"calls": 4},
@@ -98,6 +100,38 @@ class AgentHTTPTests(unittest.IsolatedAsyncioTestCase):
         run.assert_called_once_with(
             "Inspect the universe.", provider="deepseek", retrieval="qdrant", retrieval_strategy="dense"
         )
+
+    async def test_lookup_traces_expose_only_model_names_arguments_and_public_retrieval_fields(self):
+        calls = [
+            {"name": "lookup_history", "arguments": {}},
+            {"name": "search_knowledge", "arguments": {"query": "Recorded costs", "answer_target": None}},
+        ]
+        retrieval = {
+            "status": "ok", "candidate_status": "ok", "backend": "qdrant", "mode": "dense",
+            "candidate_ids": ["RR-010"], "verification_status": "ok", "verified_ids": ["RR-010"],
+            "related_research_ids": ["RR-010"],
+            "research_ids": ["RR-010"], "latency_ms": {"candidate_ms": 2, "verification_ms": 3},
+            "errors": [{"error": "internal details"}], "runtime_total_ms": 5,
+            "verification_query": "internal query", "results": [{"text": "private record"}],
+        }
+        result = {"status": "ok", "observed": {
+            "model": {"tool_calls": [{**call, "reasoning": "private", "provider_payload": {"opaque": True}}
+                                     for call in calls], "reasoning": "private"},
+            "retrieval": retrieval,
+        }}
+        with patch("agent.http.run_request", return_value=result), patch(
+            "agent.http.asyncio.to_thread", new=self.call_in_test
+        ):
+            response = await self.request("POST", "/v1/research", json={"message": "Recorded costs?"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["model"], {"tool_calls": calls})
+        self.assertEqual(response.json()["retrieval"], {
+            "status": "ok", "candidate_status": "ok", "candidate_ids": ["RR-010"],
+            "related_research_ids": ["RR-010"], "verification_status": "ok",
+            "verified_ids": ["RR-010"], "research_ids": ["RR-010"],
+        })
+        self.assertNotIn("private", response.text)
+        self.assertNotIn("provider_payload", response.text)
 
     async def test_history_is_passed_as_structured_bounded_context(self):
         result = {
@@ -153,6 +187,14 @@ class AgentHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["grounding"]["labels"], ["supported"])
         self.assertIsNone(body["run_id"])
         self.assertEqual(body["steps"], [])
+        self.assertEqual(body["model"]["tool_calls"], [{
+            "name": "search_knowledge", "arguments": {
+                "query": "我们之前记录的默认交易成本是多少？", "answer_target": None,
+            },
+        }])
+        self.assertEqual(body["retrieval"]["candidate_ids"], ["RR-010"])
+        self.assertEqual(body["retrieval"]["verification_status"], "ok")
+        self.assertEqual(body["retrieval"]["verified_ids"], ["RR-010"])
         self.assertEqual(body["telemetry"]["calls"], 5)
         retriever.search.assert_called_once_with(
             "我们之前记录的默认交易成本是多少？", mode="dense", limit=5,
