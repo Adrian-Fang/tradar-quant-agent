@@ -8,15 +8,13 @@ from typing import Any
 
 from ..core.resources import load_prompt
 from ..core.providers import provider_error_type
-from ..tools.calling import TOOL_SCHEMAS
+from ..tools.calling import TOOL_SCHEMAS, normalize_tool_arguments
 
 
 PROMPT = load_prompt("prompts/planning.md")
 ALLOWED_STATUSES = {"ready", "finish", "needs_input", "no_action"}
 TOOL_NAMES = {schema["name"] for schema in TOOL_SCHEMAS}
-TOOL_PARAMETERS = {
-    schema["name"]: schema["parameters"] for schema in TOOL_SCHEMAS
-}
+TOOL_SCHEMAS_BY_NAME = {schema["name"]: schema for schema in TOOL_SCHEMAS}
 
 
 def _response_text(response: Any) -> str:
@@ -49,14 +47,19 @@ def parse_plan_response(text: str) -> tuple[dict[str, Any] | None, str | None]:
             return None, "step.name is not an available tool"
         if not isinstance(step["arguments"], dict):
             return None, "step.arguments must be an object"
-        parameters = TOOL_PARAMETERS[step["name"]]
-        missing = sorted(set(parameters.get("required", [])) - set(step["arguments"]))
+        schema = TOOL_SCHEMAS_BY_NAME[step["name"]]
+        parameters = schema["parameters"]
+        # Strict wire schemas require nullable defaults; retained plans may omit them.
+        nullable_defaults = {key for key, prop in parameters.get("properties", {}).items()
+                             if schema["strict"] and "null" in prop.get("type", [])}
+        missing = sorted(set(parameters.get("required", [])) - set(step["arguments"]) - nullable_defaults)
         if missing:
             return None, f"step.arguments is missing required fields: {missing}"
         if parameters.get("additionalProperties") is False:
             unknown = sorted(set(step["arguments"]) - set(parameters.get("properties", {})))
             if unknown:
                 return None, f"step.arguments contains unknown fields: {unknown}"
+        step["arguments"] = normalize_tool_arguments(step["name"], step["arguments"])
     if parsed["status"] == "ready" and not parsed["steps"]:
         return None, "ready response must contain at least one step"
     if parsed["status"] != "ready" and parsed["steps"]:

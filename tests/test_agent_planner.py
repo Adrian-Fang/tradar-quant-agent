@@ -55,6 +55,42 @@ class RuntimePlannerTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
 
+    def test_fixed_tool_nullable_defaults_can_be_omitted_or_null(self):
+        cases = (
+            ("inspect_universe", {"start_date": "2026-07-31", "end_date": "2026-07-31"},
+             ("exclude_st", "min_turnover_rate", "min_listed_days", "snapshot_dates")),
+            ("evaluate_factor", {"factor": "high52", "observe_start": "2025-01-01", "observe_end": "2025-03-31"},
+             ("warmup_days", "ic_horizons", "ic_method", "n_groups", "return_clip")),
+            ("run_backtest", {"target_weights": ".runtime/weights.csv", "price_panel": ".runtime/close.csv",
+                              "open_panel": ".runtime/open.csv"},
+             ("buyable", "sellable", "benchmark_returns", "buy_cost", "sell_cost", "slippage")),
+        )
+        for name, required, defaults in cases:
+            for use_null in (False, True):
+                with self.subTest(tool=name, use_null=use_null):
+                    arguments = {**required, **(dict.fromkeys(defaults) if use_null else {})}
+                    result = plan_request("research", client=FakeClient(response({
+                        "status": "ready", "steps": [{"name": name, "arguments": arguments}], "reason": "defaults",
+                    })))
+                    self.assertEqual(result["status"], "ok")
+                    self.assertEqual(result["plan"]["steps"][0]["arguments"], required)
+            for key in required:
+                with self.subTest(tool=name, missing=key):
+                    result = plan_request("research", client=FakeClient(response({
+                        "status": "ready", "steps": [{"name": name, "arguments": {
+                            field: value for field, value in required.items() if field != key
+                        }}], "reason": "missing input",
+                    })))
+                    self.assertEqual(result["error_type"], "malformed_response")
+                    self.assertIn(key, result["error"])
+            with self.subTest(tool=name, unknown_null=True):
+                result = plan_request("research", client=FakeClient(response({
+                    "status": "ready", "steps": [{"name": name, "arguments": {**required, "invented": None}}],
+                    "reason": "unknown argument",
+                })))
+                self.assertEqual(result["error_type"], "malformed_response")
+                self.assertIn("invented", result["error"])
+
     def test_missing_required_argument_is_malformed_response(self):
         result = plan_request("evaluate high52", client=FakeClient(response({
             "status": "ready",
@@ -153,6 +189,7 @@ class RuntimePlannerTests(unittest.TestCase):
                         "end_date": "2026-09-23",
                         "market_proxy": "000300",
                         "horizons": [1, 3, 5, 10, 20],
+                        "optional_context": None,
                     },
                     "assumptions": ["Use CSI 300 / 000300 as the broad-market proxy."],
                     "outputs": ["forward returns", "sample counts"],
@@ -171,6 +208,7 @@ class RuntimePlannerTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["plan"]["status"], "ready")
         self.assertEqual(result["plan"]["steps"][0]["name"], "run_research_experiment")
+        self.assertEqual(result["plan"]["steps"][0], experiment)
         self.assertNotIn("needs_input", result["plan"]["status"])
         self.assertNotIn("weights.csv", json.dumps(prompt_input, ensure_ascii=False))
         self.assertNotIn("program", json.dumps(result["plan"], ensure_ascii=False))
